@@ -2482,7 +2482,7 @@ input {
   width: min(94vw, 118rem);
   max-height: calc(100vh - clamp(1.6rem, 4vw, 4.8rem));
   display: grid;
-  grid-template-columns: minmax(0, 1.7fr) minmax(20rem, 0.9fr);
+  grid-template-columns: minmax(0, 2.15fr) minmax(18rem, 0.75fr);
   gap: clamp(1rem, 1.6vw, 2rem);
   padding: clamp(1rem, 1.8vw, 2.4rem);
   border-radius: var(--radius-xl);
@@ -2698,7 +2698,13 @@ input {
 }
 
 .overlay-helps {
-  margin-top: auto;
+  margin-top: 0;
+  padding-top: clamp(0.4rem, 0.8vw, 0.8rem);
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.overlay-helps.locked {
+  opacity: 0.94;
 }
 
 .overlay-helps-head {
@@ -2723,6 +2729,7 @@ input {
 
 .overlay-helps-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(0.6rem, 0.9vw, 1.1rem);
 }
 
 .overlay-helps-grid.defense {
@@ -2741,14 +2748,14 @@ input {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  min-height: 2.4rem;
-  padding: 0.4rem 0.5rem;
+  min-height: 3.4rem;
+  padding: 0.45rem 0.6rem;
   border-radius: 999px;
   border: 1.5px solid rgba(148, 163, 184, 0.35);
   background: rgba(15, 23, 42, 0.35);
   color: rgba(203, 213, 225, 0.85);
   font-weight: 800;
-  font-size: clamp(0.75rem, 0.85vw, 0.95rem);
+  font-size: clamp(0.9rem, 1.05vw, 1.25rem);
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
@@ -2781,9 +2788,22 @@ input {
 }
 
 .overlay-helps-grid .help-btn {
-  min-height: clamp(4.4rem, 6vh, 7rem);
-  font-size: clamp(0.7rem, 0.8vw, 0.95rem);
+  min-height: clamp(6.6rem, 10vh, 11rem);
+  gap: clamp(0.4rem, 0.6vw, 0.7rem);
+  padding: clamp(0.6rem, 0.9vw, 1rem) clamp(0.4rem, 0.6vw, 0.8rem);
+  border-width: 3px;
+  font-size: clamp(0.95rem, 1.15vw, 1.45rem);
   background: rgba(248, 250, 252, 0.97);
+}
+
+.overlay-helps-grid .help-btn i {
+  font-size: clamp(1.9rem, 2.4vw, 3rem);
+}
+
+.overlay-helps-grid .help-count {
+  font-size: clamp(0.85rem, 0.95vw, 1.1rem);
+  min-width: 1.7rem;
+  height: 1.7rem;
 }
 
 .overlay-helps .help-desc {
@@ -2850,6 +2870,107 @@ input {
 
 .overlay-card.bonus .overlay-lead {
   margin: 0;
+}
+
+/* ---------- Banner giliran berikutnya ---------- */
+
+.turn-handoff {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 2vw, 2rem);
+  background: rgba(6, 10, 30, 0.46);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: overlayIn 0.2s ease both;
+}
+
+.turn-handoff-card {
+  width: min(48rem, 94vw);
+  padding: clamp(1.3rem, 2.2vw, 2.4rem);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: linear-gradient(160deg, rgba(30, 27, 75, 0.97) 0%, rgba(15, 23, 42, 0.99) 100%);
+  color: #eef2ff;
+  text-align: center;
+  box-shadow: 0 32px 90px rgba(2, 6, 23, 0.65);
+  animation: modalIn 0.26s var(--ease) both;
+}
+
+.handoff-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 1.1rem;
+  margin-bottom: clamp(0.8rem, 1.4vw, 1.4rem);
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.2);
+  border: 1px solid rgba(129, 140, 248, 0.45);
+  color: #c7d2fe;
+  font-size: clamp(0.85rem, 1vw, 1.15rem);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.handoff-kicker.thrown {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fde68a;
+}
+
+.handoff-actor {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  text-align: left;
+  padding: clamp(0.7rem, 1.1vw, 1.1rem);
+  margin-bottom: clamp(0.9rem, 1.5vw, 1.5rem);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.07);
+  border: 2px solid rgba(255, 255, 255, 0.14);
+}
+
+.handoff-actor .avatar {
+  width: clamp(3rem, 4vw, 4.4rem);
+  height: clamp(3rem, 4vw, 4.4rem);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-weight: 850;
+  font-size: clamp(1.2rem, 1.6vw, 1.9rem);
+  background: linear-gradient(140deg, var(--team-light), var(--team-deep));
+  flex: 0 0 auto;
+}
+
+.handoff-actor strong {
+  display: block;
+  font-size: clamp(1.15rem, 1.6vw, 1.9rem);
+  font-weight: 850;
+}
+
+.handoff-actor p {
+  margin: 0.25rem 0 0;
+  font-size: clamp(0.85rem, 1vw, 1.15rem);
+  color: rgba(226, 232, 240, 0.8);
+  line-height: 1.4;
+}
+
+.turn-handoff-card .btn {
+  width: 100%;
+  min-height: clamp(4.6rem, 8vh, 7rem);
+  font-size: clamp(1.15rem, 1.6vw, 2rem);
+  font-weight: 850;
+}
+
+.handoff-hint {
+  display: block;
+  margin-top: 0.85rem;
+  font-size: clamp(0.72rem, 0.8vw, 0.9rem);
+  color: rgba(203, 213, 225, 0.6);
 }
 
 .finished-banner {
@@ -2995,12 +3116,18 @@ input {
     grid-template-columns: 1fr;
   }
 
-  .overlay-helps-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
+  .overlay-helps-grid,
   .overlay-helps-grid.defense {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .overlay-helps-grid .help-btn {
+    min-height: 5.6rem;
+    font-size: 0.9rem;
+  }
+
+  .overlay-helps-grid .help-btn i {
+    font-size: 1.6rem;
   }
 }
 

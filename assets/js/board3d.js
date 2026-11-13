@@ -115,6 +115,113 @@
   const BADGE_KINDS = ['shield', 'penawar', 'locked'];
   const BADGE_TINTS = { shield: '#0891b2', penawar: '#059669', locked: '#b45309' };
 
+  /* Wajah emoji untuk ekspresi karakter saat menyerang / terkena / senang.
+     Digambar di canvas (tanpa aset) lalu dipasang sebagai sprite di depan
+     karakter; hanya tampil sementara saat aksi berlangsung. */
+  const FACE_KINDS = ['attack', 'hit', 'cheer', 'block'];
+
+  const FACE_ANCHORS = {
+    robot: { y: 0.46, z: 0.24 },
+    creature: { y: 0.35, z: 0.27 },
+    rocket: { y: 0.45, z: 0.22 },
+    star: { y: 0.45, z: 0.22 },
+  };
+
+  function createFaceTexture(THREE, kind, tint) {
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    const cx = size / 2;
+    const cy = size / 2;
+    const r = 96;
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.95)';
+    ctx.fill();
+    ctx.lineWidth = 14;
+    ctx.strokeStyle = tint;
+    ctx.stroke();
+
+    ctx.lineWidth = 15;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.strokeStyle = '#1e1b4b';
+    ctx.fillStyle = '#1e1b4b';
+
+    const drawX = (x, y, s) => {
+      ctx.beginPath();
+      ctx.moveTo(x - s, y - s);
+      ctx.lineTo(x + s, y + s);
+      ctx.moveTo(x + s, y - s);
+      ctx.lineTo(x - s, y + s);
+      ctx.stroke();
+    };
+
+    if (kind === 'attack') {
+      // Alis turun + mata menyempit + mulut berteriak.
+      ctx.beginPath();
+      ctx.moveTo(cx - 62, cy - 44);
+      ctx.lineTo(cx - 20, cy - 22);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx + 62, cy - 44);
+      ctx.lineTo(cx + 20, cy - 22);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.ellipse(cx - 38, cy - 2, 14, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(cx + 38, cy - 2, 14, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 50, 38, 30, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (kind === 'hit') {
+      // Mata X + mulut menganga kecil.
+      drawX(cx - 38, cy - 8, 20);
+      drawX(cx + 38, cy - 8, 20);
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 50, 20, 26, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Keringat.
+      ctx.beginPath();
+      ctx.moveTo(cx + 74, cy - 54);
+      ctx.quadraticCurveTo(cx + 88, cy - 30, cx + 74, cy - 20);
+      ctx.quadraticCurveTo(cx + 60, cy - 30, cx + 74, cy - 54);
+      ctx.fill();
+    } else if (kind === 'cheer') {
+      // Mata tersenyum (∩) + senyum lebar.
+      ctx.beginPath();
+      ctx.arc(cx - 38, cy - 2, 22, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx + 38, cy - 2, 22, Math.PI * 1.1, Math.PI * 1.9);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy + 26, 44, Math.PI * 0.16, Math.PI * 0.84);
+      ctx.stroke();
+    } else {
+      // Mata melotot + mulut datar (kaget tertahan shield).
+      ctx.beginPath();
+      ctx.arc(cx - 38, cy - 6, 19, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx + 38, cy - 6, 19, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - 30, cy + 48);
+      ctx.lineTo(cx + 30, cy + 48);
+      ctx.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    if (THREE.sRGBEncoding !== undefined) texture.encoding = THREE.sRGBEncoding;
+    return texture;
+  }
+
   /* Palet per slot; harus sama dengan PLAYER_SLOTS di app.js. */
   const SLOT_STYLES = {
     1: { form: 'robot', main: 0x2563eb, light: 0x60a5fa, deep: 0x1e3a8a, label: '#1d4ed8', ring: 0x3b82f6, accent: 0xfbbf24 },
@@ -254,6 +361,10 @@
     const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
     const sprite = new THREE.Sprite(material);
     sprite.scale.set(1.5, 0.47, 1);
+    /* Nomor kotak adalah bidang transparan dengan renderOrder 1. Tanpa
+       renderOrder lebih tinggi, nomor digambar setelah sprite nama sehingga
+       nama pemain tertimpa nomor. Nama harus selalu di lapisan teratas. */
+    sprite.renderOrder = 40;
     sprite.userData.dispose = () => {
       texture.dispose();
       material.dispose();
@@ -714,7 +825,11 @@
 
     _buildNumbers() {
       const THREE = this.THREE;
-      this.numberMaterial = new THREE.MeshBasicMaterial({ map: this.numberTexture || (this.numberTexture = createNumberAtlas(THREE)), transparent: true });
+      this.numberMaterial = new THREE.MeshBasicMaterial({
+        map: this.numberTexture || (this.numberTexture = createNumberAtlas(THREE)),
+        transparent: true,
+        depthWrite: false,
+      });
       this._track({ dispose: () => { this.numberTexture.dispose(); this.numberMaterial.dispose(); } });
 
       for (let num = 1; num <= WIN_CELL; num++) {
@@ -945,6 +1060,7 @@
           const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
           const sprite = new THREE.Sprite(mat);
           sprite.scale.set(0.34, 0.34, 1);
+          sprite.renderOrder = 41;
           const spread = (badgeIndex - (BADGE_KINDS.length - 1) / 2) * 0.2;
           sprite.position.set(spread, 0.98, 0);
           sprite.visible = false;
@@ -964,6 +1080,17 @@
         });
         this._track({ dispose: () => { ringGeo.dispose(); ringMat.dispose(); if (label.userData.dispose) label.userData.dispose(); } });
 
+        /* Wajah emoji: sprite di depan karakter, tersembunyi saat idle. */
+        const anchor = FACE_ANCHORS[style.form] || FACE_ANCHORS.robot;
+        const faceMat = new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false });
+        const face = new THREE.Sprite(faceMat);
+        face.scale.set(0.34, 0.34, 1);
+        face.renderOrder = 41;
+        face.position.set(0, anchor.y, anchor.z);
+        face.visible = false;
+        root.add(face);
+        this._track({ dispose: () => faceMat.dispose() });
+
         return {
           root,
           bob,
@@ -971,6 +1098,10 @@
           label,
           ring,
           badges,
+          face,
+          faceToken: 0,
+          form: style.form,
+          slot: player.slot,
           pos: { x: 0, z: 0 },
           phase: (index / total) * Math.PI * 2,
           cell: 1,
@@ -1120,7 +1251,9 @@
       });
     }
 
-    slide(id, from, to, type) {
+    /* Naik tangga / turun ular. `opts.durationMs` dipakai React agar durasi
+       transisi bisa diatur tanpa mengubah kode papan. */
+    slide(id, from, to, type, opts) {
       const ch = this.chars[id];
       if (!ch) return Promise.resolve();
       const previousCell = this.cells[id];
@@ -1129,6 +1262,8 @@
       const toXZ = cellToXZ(to);
       const off = this._offsetFor(id, to);
       const end = { x: toXZ.x + off.dx, z: toXZ.z + off.dz };
+      const asked = opts && Number(opts.durationMs);
+      const duration = Number.isFinite(asked) && asked > 0 ? asked / 1000 : type === 'ladder' ? 2 : 2;
 
       if (this.reducedMotion) {
         ch.ring.visible = false;
@@ -1147,25 +1282,104 @@
       let delta = heading - startRot;
       while (delta > Math.PI) delta -= Math.PI * 2;
       while (delta < -Math.PI) delta += Math.PI * 2;
-      const duration = clamp(0.55 + Math.hypot(end.x - start.x, end.z - start.z) * 0.045, 0.6, 1.1);
+      const climbing = type === 'ladder';
 
       return this._animate(
         duration,
         (k) => {
           ch.root.position.x = start.x + (end.x - start.x) * k;
           ch.root.position.z = start.z + (end.z - start.z) * k;
-          const climb = type === 'ladder' ? k : 0;
-          ch.root.position.y = BOARD_TOP_Y + Math.sin(Math.PI * k) * (type === 'ladder' ? 0.22 : 0.3) - climb * 0.02;
+          /* Tangga: naik dengan langkah kecil berirama. Ular: meluncur turun
+             sambil berputar agar gerakannya terbaca. */
+          const lift = climbing
+            ? Math.sin(Math.PI * k) * 0.26 + Math.abs(Math.sin(k * Math.PI * 7)) * 0.07
+            : Math.sin(Math.PI * k) * 0.2;
+          ch.root.position.y = BOARD_TOP_Y + lift;
           ch.root.rotation.y = startRot + delta * k;
-          const spin = type === 'snake' ? Math.sin(k * Math.PI * 3) * 0.18 : 0;
+          const spin = climbing ? Math.sin(k * Math.PI * 6) * 0.07 : Math.sin(k * Math.PI * 4) * 0.34 * (1 - k * 0.5);
           ch.bob.rotation.z = spin;
+          const squash = climbing ? 1 + Math.abs(Math.sin(k * Math.PI * 7)) * 0.05 : 1;
+          ch.bob.scale.set(squash, 1, squash);
         },
         easeInOutCubic
       ).then(() => {
         ch.bob.rotation.z = 0;
+        ch.bob.scale.set(1, 1, 1);
+        ch.root.position.y = BOARD_TOP_Y;
         ch.root.rotation.y = heading;
         this._reflowCell(previousCell);
         this._reflowCell(to);
+      });
+    }
+
+    /* Ganti ekspresi wajah karakter. `kind`: attack, hit, cheer, block,
+       atau idle untuk menyembunyikan wajah. `durationMs` opsional; wajah
+       kembali sendiri ke idle setelah durasi itu. */
+    setFace(id, kind, durationMs) {
+      const ch = this.chars && this.chars[id];
+      if (!ch || !ch.face) return;
+      if (!kind || kind === 'idle' || FACE_KINDS.indexOf(kind) < 0) {
+        ch.faceToken = (ch.faceToken || 0) + 1;
+        ch.face.visible = false;
+        return;
+      }
+      const style = styleFor(ch.slot);
+      const key = `${ch.slot}:${kind}`;
+      this.faceTextures = this.faceTextures || {};
+      if (!this.faceTextures[key]) {
+        const texture = createFaceTexture(this.THREE, kind, style.label);
+        this.faceTextures[key] = texture;
+        this._track({ dispose: () => texture.dispose() });
+      }
+      ch.face.material.map = this.faceTextures[key];
+      ch.face.material.needsUpdate = true;
+      ch.face.visible = true;
+      const stamp = (ch.faceToken || 0) + 1;
+      ch.faceToken = stamp;
+      if (durationMs) {
+        this._animate(durationMs / 1000, () => {}, (t) => t).then(() => {
+          if (ch.faceToken === stamp) ch.face.visible = false;
+        });
+      }
+    }
+
+    /* Cincin ledakan di posisi tertentu. */
+    _burst(x, z, color) {
+      const THREE = this.THREE;
+      const geo = new THREE.RingGeometry(0.18, 0.4, 30);
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.92, side: THREE.DoubleSide, depthWrite: false });
+      const ring = new THREE.Mesh(geo, mat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.set(x, BOARD_TOP_Y + 0.04, z);
+      this.scene.add(ring);
+      return this._animate(0.5, (k) => {
+        const s = 0.6 + k * 2.6;
+        ring.scale.set(s, s, s);
+        mat.opacity = 0.92 * (1 - k);
+      }, easeOutCubic).then(() => {
+        this.scene.remove(ring);
+        geo.dispose();
+        mat.dispose();
+      });
+    }
+
+    /* Proyektil senjata yang terbang dari penyerang ke target. */
+    _flyOrb(from, to, color) {
+      const THREE = this.THREE;
+      const geo = new THREE.SphereGeometry(0.1, 14, 12);
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.9, roughness: 0.3 });
+      const orb = new THREE.Mesh(geo, mat);
+      orb.position.set(from.x, 0.55, from.z);
+      this.scene.add(orb);
+      return this._animate(0.5, (k) => {
+        orb.position.x = from.x + (to.x - from.x) * k;
+        orb.position.z = from.z + (to.z - from.z) * k;
+        orb.position.y = 0.55 + Math.sin(Math.PI * k) * 0.4;
+        orb.scale.setScalar(1 + Math.sin(Math.PI * k) * 0.6);
+      }, easeInOutCubic).then(() => {
+        this.scene.remove(orb);
+        geo.dispose();
+        mat.dispose();
       });
     }
 
@@ -1189,37 +1403,123 @@
       });
     }
 
-    /* Efek serangan senjata. Visual saja; posisi akhir tetap diatur React
-       lewat setPositions setelah Promise ini selesai. `kind`: bomb, magnet,
-       portal, trap, block. */
-    strike(actorId, targetId, kind) {
-      const THREE = this.THREE;
-      const ch = this.chars[targetId];
-      if (!ch) return Promise.resolve();
-      if (this.reducedMotion) return Promise.resolve();
+    /* Efek serangan senjata: penyerang melompat menghadap target dengan
+       wajah "attack", lalu proyektil/efek khas senjata, lalu target bereaksi
+       dengan wajah "hit"/"block". Visual saja; posisi akhir tetap diatur
+       React lewat setPositions setelah Promise ini selesai.
+       `kind`: bomb, magnet, portal, trap, block. `opts.onCue` dipanggil dengan
+       'attack' dan 'hit'/'block' agar React memutar suara yang tepat waktu. */
+    strike(actorId, targetId, kind, opts) {
+      const actor = this.chars[actorId];
+      const target = this.chars[targetId];
+      if (!actor && !target) return Promise.resolve();
+      const cue = (name) => {
+        if (opts && typeof opts.onCue === 'function') {
+          try {
+            opts.onCue(name);
+          } catch (error) {
+            /* abaikan */
+          }
+        }
+      };
+      const blocked = kind === 'block';
+      const COLORS_BY_KIND = { bomb: 0xf97316, magnet: 0xf43f5e, portal: 0x8b5cf6, trap: 0x14b8a6, block: 0x38bdf8 };
+      const color = COLORS_BY_KIND[kind] || COLORS_BY_KIND.bomb;
 
-      const hex = kind === 'trap' ? 0x14b8a6 : kind === 'portal' ? 0x8b5cf6 : kind === 'magnet' ? 0xf43f5e : kind === 'block' ? 0x38bdf8 : 0xf97316;
-      const geo = new THREE.RingGeometry(0.2, 0.42, 28);
-      const mat = new THREE.MeshBasicMaterial({ color: hex, transparent: true, opacity: 0.9, side: THREE.DoubleSide });
-      const ring = new THREE.Mesh(geo, mat);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.set(ch.root.position.x, BOARD_TOP_Y + 0.03, ch.root.position.z);
-      this.scene.add(ring);
+      if (!target) {
+        if (actor) this.setFace(actorId, 'attack', 800);
+        cue('attack');
+        return this._animate(0.4, () => {});
+      }
 
-      const shake = kind === 'block' ? 0.02 : 0.06;
-      const baseY = ch.root.position.y;
+      if (this.reducedMotion || !actor) {
+        if (actor) this.setFace(actorId, 'attack', 900);
+        this.setFace(targetId, blocked ? 'block' : 'hit', 1100);
+        cue('attack');
+        cue(blocked ? 'block' : 'hit');
+        return this._animate(0.6, () => {});
+      }
 
-      return this._animate(0.7, (k) => {
-        const s = 0.7 + k * 2.1;
-        ring.scale.set(s, s, s);
-        mat.opacity = 0.9 * (1 - k);
-        ch.root.position.y = baseY + Math.sin(k * Math.PI * 6) * shake * (1 - k);
-      }).then(() => {
-        ch.root.position.y = baseY;
-        this.scene.remove(ring);
-        geo.dispose();
-        mat.dispose();
-      });
+      const homeX = actor.root.position.x;
+      const homeZ = actor.root.position.z;
+      const homeRot = actor.root.rotation.y;
+      const targetX = target.root.position.x;
+      const targetZ = target.root.position.z;
+      const dx = targetX - homeX;
+      const dz = targetZ - homeZ;
+      const len = Math.hypot(dx, dz) || 1;
+      const nx = dx / len;
+      const nz = dz / len;
+      const heading = Math.atan2(nx, nz);
+      let delta = heading - homeRot;
+      while (delta > Math.PI) delta -= Math.PI * 2;
+      while (delta < -Math.PI) delta += Math.PI * 2;
+
+      const lunge = 0.34;
+      this.setFace(actorId, 'attack', 1600);
+      cue('attack');
+
+      return this._animate(
+        0.45,
+        (k) => {
+          const push = Math.sin(Math.PI * k);
+          actor.root.position.x = homeX + nx * lunge * push;
+          actor.root.position.z = homeZ + nz * lunge * push;
+          actor.root.position.y = BOARD_TOP_Y + push * 0.14;
+          actor.root.rotation.y = homeRot + delta * Math.min(1, k * 1.6);
+        },
+        easeOutCubic
+      )
+        .then(() => {
+          actor.root.rotation.y = heading;
+          const from = { x: homeX + nx * lunge, z: homeZ + nz * lunge };
+          if (kind === 'portal') {
+            return this._burst(from.x, from.z, color).then(() => this._burst(targetX, targetZ, color));
+          }
+          if (blocked) return this._burst(targetX, targetZ, color);
+          return this._flyOrb(from, { x: targetX, z: targetZ }, color).then(() =>
+            this._burst(targetX, targetZ, color)
+          );
+        })
+        .then(() => {
+          cue(blocked ? 'block' : 'hit');
+          this.setFace(targetId, blocked ? 'block' : 'hit', 1200);
+          if (kind === 'portal') this.setFace(actorId, 'cheer', 1200);
+          const shake = blocked ? 0.03 : 0.07;
+          const baseY = target.root.position.y;
+          const baseX = target.root.position.x;
+          return this._animate(
+            0.45,
+            (k) => {
+              const damp = 1 - k;
+              target.root.position.y = baseY + Math.sin(k * Math.PI * 8) * shake * damp;
+              target.root.position.x = baseX + Math.sin(k * Math.PI * 6) * shake * 0.6 * damp;
+            },
+            (t) => t
+          ).then(() => {
+            target.root.position.x = baseX;
+            target.root.position.y = BOARD_TOP_Y;
+          });
+        })
+        .then(() =>
+          this._animate(
+            0.32,
+            (k) => {
+              const backX = homeX + nx * lunge;
+              const backZ = homeZ + nz * lunge;
+              actor.root.position.x = backX + (homeX - backX) * k;
+              actor.root.position.z = backZ + (homeZ - backZ) * k;
+              actor.root.position.y = BOARD_TOP_Y + Math.sin(Math.PI * k) * 0.06;
+            },
+            easeInOutCubic
+          )
+        )
+        .then(() => {
+          actor.root.position.set(homeX, BOARD_TOP_Y, homeZ);
+          actor.root.rotation.y = homeRot;
+          this.setFace(actorId, 'idle');
+          this.setFace(targetId, 'idle');
+        });
     }
 
     /* Pertahanan aktif per pemain, ditampilkan sebagai lencana melayang di

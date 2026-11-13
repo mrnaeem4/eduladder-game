@@ -8,6 +8,12 @@ const RESOLVE_DELAY = 1250;
 const FEEDBACK_DELAY = 950;
 const HOP_DELAY = 900;
 
+/* Transisi tangga/ular: animasi + jeda diam sebelum popup soal muncul. */
+const LADDER_SLIDE_MS = 2000;
+const SNAKE_SLIDE_MS = 2000;
+const SLIDE_HOLD_MS = 3000;
+const LAND_PROMPT_HOLD_MS = 1200;
+
 /* Peta bebas rantai: kaki tangga bukan ekor ular, puncak tangga bukan
    kepala ular, dan tidak ada endpoint ganda. */
 const LADDERS = { 3: 18, 7: 64, 24: 43, 41: 62, 59: 80, 77: 96 };
@@ -269,6 +275,11 @@ const SFX_RECIPES = {
   portal: { type: 'sine', start: 0.05, from: 520, to: 880, dur: 0.18, gain: 0.28, repeat: 2 },
   trap: { type: 'square', start: 0.02, from: 420, to: 180, dur: 0.16, gain: 0.22 },
   block: { type: 'triangle', start: 0.01, from: 220, to: 120, dur: 0.22, gain: 0.3 },
+  ladder: { type: 'triangle', start: 0.05, from: 320, to: 760, dur: 0.34, gain: 0.26 },
+  snake: { type: 'sawtooth', start: 0.04, from: 640, to: 180, dur: 0.4, gain: 0.24 },
+  correct: { type: 'sine', start: 0.04, from: 520, to: 980, dur: 0.22, gain: 0.26 },
+  wrong: { type: 'square', start: 0.03, from: 260, to: 110, dur: 0.26, gain: 0.24 },
+  click: { type: 'triangle', start: 0.01, from: 520, to: 620, dur: 0.06, gain: 0.14 },
 };
 
 function playSfx(ctx, kind) {
@@ -311,6 +322,174 @@ function playSfx(ctx, kind) {
       osc.stop(at + recipe.dur);
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Audio file (BGM + efek suara dari assets/sound)                     */
+/* ------------------------------------------------------------------ */
+
+const SOUND_BASE = 'assets/sound/';
+const SOUND_FILES = {
+  ladder: `${SOUND_BASE}fluteup.mp3`,
+  snake: `${SOUND_BASE}flutedown.mp3`,
+  bomb: `${SOUND_BASE}boom.mp3`,
+  magnet: `${SOUND_BASE}magnet.mp3`,
+};
+const BGM_SRC = `${SOUND_BASE}bgm_main.mp3`;
+const BGM_VOLUME = 0.32;
+const SFX_VOLUME = 0.85;
+
+/* Mesin audio sederhana: satu <audio> loop untuk BGM dan kolam kecil
+   elemen audio per efek suara. Elemen dibuat setelah interaksi pengguna
+   agar tidak diblokir kebijakan autoplay browser. */
+function createAudioEngine() {
+  let ctx = null;
+  let bgm = null;
+  let fadeTimer = null;
+  const pools = {};
+
+  const getCtx = () => {
+    if (!ctx) {
+      const Ctor = window.AudioContext || window.webkitAudioContext;
+      if (!Ctor) return null;
+      try {
+        ctx = new Ctor();
+      } catch (error) {
+        return null;
+      }
+    }
+    if (ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(() => {});
+    return ctx;
+  };
+
+  const poolFor = (key) => {
+    if (!SOUND_FILES[key]) return null;
+    if (!pools[key]) {
+      pools[key] = [0, 1].map(() => {
+        const el = new Audio(SOUND_FILES[key]);
+        el.preload = 'auto';
+        el.volume = SFX_VOLUME;
+        return el;
+      });
+    }
+    return pools[key];
+  };
+
+  const prime = () => {
+    Object.keys(SOUND_FILES).forEach((key) => {
+      const pool = poolFor(key);
+      if (!pool) return;
+      pool.forEach((el) => {
+        try {
+          el.load();
+        } catch (error) {
+          /* abaikan */
+        }
+      });
+    });
+  };
+
+  const playFile = (key) => {
+    const pool = poolFor(key);
+    if (!pool) return false;
+    const el = pool.find((item) => item.paused || item.ended) || pool[0];
+    try {
+      el.currentTime = 0;
+      el.volume = SFX_VOLUME;
+      const playing = el.play();
+      if (playing && playing.catch) playing.catch(() => {});
+      return true;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const fadeTo = (target, step, done) => {
+    if (fadeTimer) clearInterval(fadeTimer);
+    fadeTimer = setInterval(() => {
+      if (!bgm) {
+        clearInterval(fadeTimer);
+        fadeTimer = null;
+        return;
+      }
+      const delta = target - bgm.volume;
+      if (Math.abs(delta) <= step) {
+        bgm.volume = target;
+        clearInterval(fadeTimer);
+        fadeTimer = null;
+        if (done) done();
+        return;
+      }
+      bgm.volume += Math.sign(delta) * step;
+    }, 70);
+  };
+
+  const startBgm = () => {
+    try {
+      if (!bgm) {
+        bgm = new Audio(BGM_SRC);
+        bgm.loop = true;
+        bgm.preload = 'auto';
+        bgm.volume = 0;
+      }
+      if (bgm.paused) {
+        const playing = bgm.play();
+        if (playing && playing.catch) playing.catch(() => {});
+      }
+      if (bgm.volume >= BGM_VOLUME - 0.01 && !fadeTimer) return;
+      fadeTo(BGM_VOLUME, 0.02);
+    } catch (error) {
+      /* Musik tidak boleh menghentikan permainan. */
+    }
+  };
+
+  const stopBgm = () => {
+    if (!bgm) return;
+    fadeTo(0, 0.05, () => {
+      if (!bgm) return;
+      try {
+        bgm.pause();
+        bgm.currentTime = 0;
+      } catch (error) {
+        /* abaikan */
+      }
+    });
+  };
+
+  const dispose = () => {
+    if (fadeTimer) {
+      clearInterval(fadeTimer);
+      fadeTimer = null;
+    }
+    if (bgm) {
+      try {
+        bgm.pause();
+      } catch (error) {
+        /* abaikan */
+      }
+      bgm = null;
+    }
+    Object.keys(pools).forEach((key) => {
+      pools[key].forEach((el) => {
+        try {
+          el.pause();
+        } catch (error) {
+          /* abaikan */
+        }
+      });
+      delete pools[key];
+    });
+    if (ctx && ctx.close) {
+      try {
+        ctx.close();
+      } catch (error) {
+        /* abaikan */
+      }
+    }
+    ctx = null;
+  };
+
+  return { getCtx, playFile, startBgm, stopBgm, prime, dispose };
 }
 
 /* ------------------------------------------------------------------ */
@@ -831,6 +1010,7 @@ function HelpsRow({
   helpDescription,
   tab,
   onTabChange,
+  locked,
 }) {
   const groupHelps = HELPS.filter((help) => help.group === tab);
   /* Hitung per grup tab, bukan grup tab yang sedang aktif, agar badge tiap
@@ -839,14 +1019,14 @@ function HelpsRow({
     HELPS.filter((help) => help.group === groupKey).reduce((sum, help) => sum + (helps[help.key] || 0), 0);
 
   return (
-    <div className="overlay-helps">
+    <div className={`overlay-helps ${locked ? 'locked' : ''}`}>
       <div className="overlay-helps-head">
         <h3>
           <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Bantuan {ownerLabel}
         </h3>
-        <span className="pill neutral">
-          <i className="fa-solid fa-layer-group" aria-hidden="true"></i>
-          {sumHelps(helps)} tersisa
+        <span className={`pill ${locked ? 'warn' : 'neutral'}`}>
+          <i className={`fa-solid ${locked ? 'fa-lock' : 'fa-layer-group'}`} aria-hidden="true"></i>
+          {locked ? 'Terkunci' : `${sumHelps(helps)} tersisa`}
         </span>
       </div>
       <div className="helps-tabs" role="tablist" aria-label="Jenis bantuan">
@@ -880,10 +1060,10 @@ function HelpsRow({
             type="button"
             className={`help-btn ${help.cls} ${helpActive(help.key) ? 'active' : ''}`}
             onClick={() => onUseHelp(help.key)}
-            disabled={helpBlocked(help.key)}
+            disabled={locked || helpBlocked(help.key)}
             aria-label={`${help.label}: ${help.short}. Sisa ${helps[help.key]}.`}
             aria-pressed={helpActive(help.key)}
-            title={help.desc}
+            title={locked ? 'Soal ini dilempar ke pemain lain; bantuan dikunci.' : help.desc}
           >
             <span className={`help-count ${helps[help.key] === 0 ? 'zero' : ''}`}>{helps[help.key]}</span>
             <i className={help.icon} aria-hidden="true"></i>
@@ -891,7 +1071,9 @@ function HelpsRow({
           </button>
         ))}
       </div>
-      <p className="help-desc">{helpDescription}</p>
+      <p className="help-desc">
+        {locked ? 'Soal ini dilempar ke pemain berikutnya. Hanya penerima yang menjawab, tanpa bantuan.' : helpDescription}
+      </p>
     </div>
   );
 }
@@ -1046,6 +1228,46 @@ function StartCountdown({ count, teamName }) {
   );
 }
 
+function TurnHandoffBanner({ info, player, onContinue }) {
+  if (!info || !player) return null;
+  const thrown = info.mode === 'ready';
+  const messages = {
+    thrown: 'Soal dilempar kepadamu. Timer mulai penuh setelah kamu menekan tombol.',
+    answer: 'Siap menjawab soal berikutnya? Timer baru berjalan setelah kamu siap.',
+    locked: 'Giliranmu terkunci tadi, jadi tidak ada langkah maju.',
+    penawar: 'Hukuman soal ditahan Penawar. Giliranmu selesai.',
+    shield: 'Shield menahan hukuman soal. Giliranmu selesai.',
+    ladder: 'Selesai naik tangga. Bersiap untuk giliran berikutnya.',
+    snake: 'Selesai turun karena ular. Bersiap untuk giliran berikutnya.',
+    start: 'Permainan siap. Tekan Lanjutkan untuk soal pertama.',
+  };
+
+  return (
+    <div className="turn-handoff" role="dialog" aria-modal="true" aria-label="Beralih ke pemain berikutnya">
+      <div className="turn-handoff-card" style={themeVars(player)}>
+        <span className={`handoff-kicker ${thrown ? 'thrown' : ''}`}>
+          <i className={`fa-solid ${thrown ? 'fa-arrow-right-arrow-left' : 'fa-flag-checkered'}`} aria-hidden="true"></i>
+          {thrown ? 'Soal untukmu' : 'Giliran berikutnya'}
+        </span>
+        <div className="handoff-actor">
+          <span className="avatar" aria-hidden="true">{player.slot}</span>
+          <div className="grow">
+            <strong>{playerNameOf(player)}</strong>
+            <p>{messages[info.reason] || messages.answer}</p>
+          </div>
+        </div>
+        <button className="btn btn-primary" onClick={onContinue} autoFocus>
+          <i className={`fa-solid ${thrown ? 'fa-play' : 'fa-forward'}`} aria-hidden="true"></i>
+          {thrown ? 'Siap, jawab soal' : 'Lanjutkan'}
+        </button>
+        <span className="handoff-hint">
+          <i className="fa-solid fa-keyboard" aria-hidden="true"></i> Tekan Enter atau tombol untuk lanjut
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function MainQuestionOverlay({
   question,
   answeringId,
@@ -1073,6 +1295,7 @@ function MainQuestionOverlay({
   onPickArm,
   positions,
   bankLeft,
+  helpsLocked,
 }) {
   const answeringPlayer = players.find((player) => player.id === answeringId) || players[0];
   const activeBag = normalizeBag(helps[activeId]);
@@ -1103,6 +1326,18 @@ function MainQuestionOverlay({
           )}
 
           <OverlayAnswerGrid question={question} picked={picked} showAnswer={showAnswer} onAnswer={onAnswer} />
+
+          <HelpsRow
+            ownerLabel={playerNameOf(answeringPlayer)}
+            helps={activeBag}
+            onUseHelp={onUseHelp}
+            helpBlocked={helpBlocked}
+            helpActive={helpActive}
+            helpDescription={helpDescription}
+            tab={helpsTab}
+            onTabChange={onHelpsTabChange}
+            locked={helpsLocked}
+          />
 
           <div className="overlay-foot">
             <span className={`pill ${reward.double ? 'warn' : 'good'}`}>
@@ -1178,17 +1413,6 @@ function MainQuestionOverlay({
               </p>
             )}
           </div>
-
-            <HelpsRow
-              ownerLabel={playerNameOf(answeringPlayer)}
-              helps={activeBag}
-              onUseHelp={onUseHelp}
-              helpBlocked={helpBlocked}
-              helpActive={helpActive}
-              helpDescription={helpDescription}
-              tab={helpsTab}
-              onTabChange={onHelpsTabChange}
-            />
         </aside>
       </div>
     </div>
@@ -1417,6 +1641,7 @@ function SetupScreen({
               Game ular tangga edukatif untuk 2–4 pemain. Jawab soal, gunakan bantuan strategi, dan rebut kotak 100
               lebih dulu dari pemain lain.
             </p>
+            <p>Create with ☕ and ❤︎ by Ridwan Na'im, S.Kom.</p>
             <div className="hero-actions">
               <button className="btn btn-primary btn-xl" onClick={onStart} disabled={!canStart}>
                 <i className={`fa-solid ${canStart ? 'fa-play' : 'fa-lock'}`} aria-hidden="true"></i>
@@ -1854,7 +2079,13 @@ function SnakesLaddersGame() {
   const [armTarget, setArmTarget] = useState(null);
   const [armPick, setArmPick] = useState(null);
   const [soundOn, setSoundOn] = useState(true);
+  const [musicOn, setMusicOn] = useState(true);
   const [questionOpen, setQuestionOpen] = useState(false);
+  /* Pemilik jawaban soal aktif: pemain giliran biasa, atau penerima soal
+     lemparan. Dipakai sebagai sumber kebenaran (bukan recompute live). */
+  const [turnForId, setTurnForId] = useState(DEFAULT_PLAYERS[0].id);
+  /* Banner "Giliran berikutnya / Soal untukmu": { playerId, mode, reason }. */
+  const [handoff, setHandoff] = useState(null);
   const [sceneFailed, setSceneFailed] = useState(false);
   const [sceneFailReason, setSceneFailReason] = useState('');
   const [startCount, setStartCount] = useState(0);
@@ -1882,14 +2113,18 @@ function SnakesLaddersGame() {
   const firingRef = useRef(false);
   const flowRef = useRef(0);
   const sessionWeaponsRef = useRef({});
-  const audioRef = useRef(null);
+  const audioEngineRef = useRef(null);
   const soundOnRef = useRef(true);
+  const musicOnRef = useRef(true);
+  /* Mencegah Lanjutkan terpicu dua kali (klik tombol + Enter) yang akan
+     melewati satu soal. */
+  const handoffDoneRef = useRef(null);
   const webglCheck = useMemo(detectWebGL, []);
   const webglReason = sceneFailed ? (sceneFailReason || 'Papan 3D gagal dibuat') : webglCheck.reason;
   const use3d = webglCheck.ok && !sceneFailed;
 
-  const activeId = questionThrown ? nextPlayerId(players, currentId) : currentId;
-  questionOwnerRef.current = activeId;
+  const activeId = turnForId || currentId;
+  questionOwnerRef.current = turnForId || currentId;
   const playerName = (id) => {
     const player = players.find((item) => item.id === id);
     return player ? playerNameOf(player) : 'Pemain';
@@ -1902,11 +2137,14 @@ function SnakesLaddersGame() {
     positions,
     currentId,
     activeId,
+    turnForId,
     questions,
     gameState,
     activeQuestion,
     revealed,
     questionThrown,
+    questionOpen,
+    handoff,
     helps,
     shields,
     penawarId,
@@ -1990,47 +2228,48 @@ function SnakesLaddersGame() {
   /* ---------------- audio ---------------- */
 
   soundOnRef.current = soundOn;
+  musicOnRef.current = musicOn;
+
+  const audioEngine = useCallback(() => {
+    if (!audioEngineRef.current) audioEngineRef.current = createAudioEngine();
+    return audioEngineRef.current;
+  }, []);
 
   const ensureAudio = useCallback(() => {
     if (!soundOnRef.current) return null;
     try {
-      if (!audioRef.current) {
-        const Ctor = window.AudioContext || window.webkitAudioContext;
-        if (!Ctor) return null;
-        audioRef.current = new Ctor();
-      }
-      if (audioRef.current.state === 'suspended' && audioRef.current.resume) {
-        audioRef.current.resume().catch(() => {});
-      }
-      return audioRef.current;
+      return audioEngine().getCtx();
     } catch (error) {
       return null;
     }
-  }, []);
+  }, [audioEngine]);
 
   const sfx = useCallback(
     (kind) => {
-      const ctx = ensureAudio();
-      if (!ctx) return;
+      if (!soundOnRef.current) return;
       try {
-        playSfx(ctx, kind);
+        const engine = audioEngine();
+        if (engine.playFile(kind)) return;
+        const ctx = engine.getCtx();
+        if (ctx) playSfx(ctx, kind);
       } catch (error) {
         /* Audio tidak boleh menghentikan permainan. */
       }
     },
-    [ensureAudio]
+    [audioEngine]
   );
+
+  useEffect(() => {
+    const engine = audioEngine();
+    if (musicOn && gameState !== 'setup') engine.startBgm();
+    else engine.stopBgm();
+  }, [musicOn, gameState, audioEngine]);
 
   useEffect(
     () => () => {
-      if (audioRef.current && audioRef.current.close) {
-        try {
-          audioRef.current.close();
-        } catch (error) {
-          /* abaikan */
-        }
-      }
-      audioRef.current = null;
+      const engine = audioEngineRef.current;
+      if (engine) engine.dispose();
+      audioEngineRef.current = null;
     },
     []
   );
@@ -2059,8 +2298,10 @@ function SnakesLaddersGame() {
       if (restored) setPlayers(restored);
 
       if (savedShuffle !== null) setShuffle(savedShuffle === 'true');
-      const savedSound = sessionStorage.getItem('eduladder_sound');
+      const savedSound = sessionStorage.getItem('eduladder_sfx') || sessionStorage.getItem('eduladder_sound');
       if (savedSound !== null) setSoundOn(savedSound !== 'false');
+      const savedMusic = sessionStorage.getItem('eduladder_music');
+      if (savedMusic !== null) setMusicOn(savedMusic !== 'false');
     } catch (error) {
       console.warn('Gagal memuat data sesi:', error);
     }
@@ -2071,11 +2312,13 @@ function SnakesLaddersGame() {
       sessionStorage.setItem('eduladder_questions', JSON.stringify(questions));
       sessionStorage.setItem('eduladder_players', JSON.stringify(players));
       sessionStorage.setItem('eduladder_shuffle', String(shuffle));
+      sessionStorage.setItem('eduladder_sfx', String(soundOn));
+      sessionStorage.setItem('eduladder_music', String(musicOn));
       sessionStorage.setItem('eduladder_sound', String(soundOn));
     } catch (error) {
       console.warn('Gagal menyimpan data sesi:', error);
     }
-  }, [questions, players, shuffle, soundOn]);
+  }, [questions, players, shuffle, soundOn, musicOn]);
 
   useEffect(() => {
     document.body.classList.toggle('is-playing', gameState === 'playing' || gameState === 'starting');
@@ -2166,7 +2409,16 @@ function SnakesLaddersGame() {
       questionIntervalRef.current = null;
     }
 
-    if (gameState !== 'playing' || !activeQuestion || revealed || busy || questionLeft <= 0) {
+    if (
+      gameState !== 'playing' ||
+      !activeQuestion ||
+      revealed ||
+      busy ||
+      questionLeft <= 0 ||
+      !questionOpen ||
+      handoff ||
+      snakeLadder
+    ) {
       return undefined;
     }
     /* Modal pilih lawan / pilih slot menahan waktu soal agar pemain tidak
@@ -2195,7 +2447,7 @@ function SnakesLaddersGame() {
         questionIntervalRef.current = null;
       }
     };
-  }, [gameState, activeQuestion, revealed, busy, questionLeft, armTarget, armPick]);
+  }, [gameState, activeQuestion, revealed, busy, questionLeft, armTarget, armPick, questionOpen, handoff, snakeLadder]);
 
   /* ---------------- CSV ---------------- */
 
@@ -2292,6 +2544,7 @@ function SnakesLaddersGame() {
     setActiveQuestion(null);
     setQuestionOpen(false);
     setMovingId(null);
+    setHandoff(null);
     setGameState('finished');
     return true;
   };
@@ -2381,7 +2634,10 @@ function SnakesLaddersGame() {
 
   /* ---------------- turn flow ---------------- */
 
-  const nextTurn = () => {
+  /* Selesai satu giliran: reset state giliran, lalu TAMPILKAN banner
+     "Giliran berikutnya". Soal baru hanya dibuka lewat continueTurn(),
+     sehingga tidak ada lagi perpindahan soal yang terlalu cepat. */
+  const nextTurn = (reason = 'answer') => {
     if (finishedRef.current) return;
     /* Efek kunci habis bersama giliran pemain yang terkena. Giliran yang
        selesai adalah currentId sebelum digeser. */
@@ -2389,6 +2645,7 @@ function SnakesLaddersGame() {
     const nextId = nextPlayerId(playersRef.current, stateRef.current.currentId);
     flowRef.current += 1;
     setCurrentId(nextId);
+    setTurnForId(nextId);
     setQuestionThrown(false);
     /* Shield bertahan sampai awal giliran pemiliknya berikutnya, sehingga
        masih bisa menyerap serangan senjata pada giliran lawan di antaranya. */
@@ -2421,18 +2678,47 @@ function SnakesLaddersGame() {
     setMovingId(null);
     setTargetCell(null);
     if (board3dRef.current && board3dRef.current.highlightCell) board3dRef.current.highlightCell(null);
+    handoffDoneRef.current = null;
+    setHandoff({ playerId: nextId, mode: 'next', reason });
+  };
 
-    later(() => {
-      if (finishedRef.current) return;
-      const next = takeQuestion();
-      if (!next) {
-        finishByQuestions();
-        return;
-      }
-      setActiveQuestion(next);
-      setQuestionLeft(next.duration);
+  /* Tombol Lanjutkan / Siap pada banner giliran. */
+  const continueTurn = () => {
+    if (finishedRef.current) return;
+    const info = handoff;
+    if (!info || handoffDoneRef.current === info) return;
+    handoffDoneRef.current = info;
+    setHandoff(null);
+    setTurnForId(info.playerId);
+    setShowClue(false);
+    setSelectedHelp(null);
+    setHelpsTab('help');
+    setPicked(null);
+    setRevealed(false);
+    setBusy(false);
+    setQuestionThrown(info.mode === 'ready' ? true : false);
+
+    if (info.mode === 'ready') {
+      /* Soal yang dilempar sudah ada; timer baru mulai penuh sekarang. */
+      const current = stateRef.current.activeQuestion;
+      if (!current) return;
+      setQuestionLeft(current.duration);
       setQuestionOpen(true);
-    }, 450);
+      if (board3dRef.current && board3dRef.current.focusTurn) board3dRef.current.focusTurn(info.playerId);
+      sfx('click');
+      return;
+    }
+
+    const next = takeQuestion();
+    if (!next) {
+      finishByQuestions();
+      return;
+    }
+    setActiveQuestion(next);
+    setQuestionLeft(next.duration);
+    setQuestionOpen(true);
+    if (board3dRef.current && board3dRef.current.focusTurn) board3dRef.current.focusTurn(info.playerId);
+    sfx('click');
   };
 
   const startGame = () => {
@@ -2468,6 +2754,8 @@ function SnakesLaddersGame() {
       board3dRef.current.focusTurn(firstId);
     }
     setCurrentId(firstId);
+    setTurnForId(firstId);
+    setHandoff(null);
     setHelps(playerMap(players, DEFAULT_HELPS));
     setArms(playerMap(players, () => []));
     armsRef.current = playerMap(players, () => []);
@@ -2497,7 +2785,17 @@ function SnakesLaddersGame() {
     setSelectedHelp(null);
     setHelpsTab('help');
     setStartCount(5);
+    handoffDoneRef.current = null;
     setGameState('starting');
+
+    /* BGM dimulai dari interaksi klik ini agar tidak diblokir browser. */
+    try {
+      const engine = audioEngine();
+      engine.prime();
+      if (musicOnRef.current) engine.startBgm();
+    } catch (error) {
+      /* abaikan */
+    }
   };
 
   /* ---------------- movement ---------------- */
@@ -2547,15 +2845,18 @@ function SnakesLaddersGame() {
     setMovingId(playerId);
     const board = board3dRef.current;
     const from = posRef.current[playerId];
+    const durationMs = type === 'ladder' ? LADDER_SLIDE_MS : SNAKE_SLIDE_MS;
     if (board) {
       if (board.resume) board.resume();
-      await board.slide(playerId, from, cell, type);
+      await board.slide(playerId, from, cell, type, { durationMs });
     } else {
-      await sleep(750);
+      await sleep(durationMs);
     }
     applyPosition(playerId, cell);
     setMovingId(null);
     setTargetCell(cell);
+    /* Jeda diam setelah animasi, sebelum popup soal / banner giliran tampil. */
+    await sleep(SLIDE_HOLD_MS);
   };
 
   const openRescue = (type, playerId, cell, to) => {
@@ -2631,6 +2932,8 @@ function SnakesLaddersGame() {
     }
 
     if (direction > 0 && LADDERS[cell]) {
+      await sleep(LAND_PROMPT_HOLD_MS);
+      if (flowRef.current !== token) return;
       openRescue('ladder', playerId, cell, LADDERS[cell]);
       return;
     }
@@ -2650,6 +2953,8 @@ function SnakesLaddersGame() {
         nextTurn();
         return;
       }
+      await sleep(LAND_PROMPT_HOLD_MS);
+      if (flowRef.current !== token) return;
       openRescue('snake', playerId, cell, SNAKES[cell]);
       return;
     }
@@ -2687,16 +2992,17 @@ function SnakesLaddersGame() {
       if (isCorrect) {
         showFlash('good', 'NAIK TANGGA!');
         showToast(`${playerName(info.playerId)} naik tangga ke kotak ${info.to}!`, 'good', 'fa-solid fa-stairs');
+        sfx('ladder');
         await slideTo(info.playerId, info.to, 'ladder');
         if (flowRef.current !== token) return;
         if (rescueState(info.playerId, info.to)) return;
-        nextTurn();
+        nextTurn('ladder');
       } else {
         showFlash('bad', 'TETAP DI TANGGA');
         showToast(`Jawaban salah. ${playerName(info.playerId)} tetap di kotak ${info.from}.`, 'warn');
         await sleep(HOP_DELAY);
         if (flowRef.current !== token) return;
-        nextTurn();
+        nextTurn('answer');
       }
       return;
     }
@@ -2706,14 +3012,15 @@ function SnakesLaddersGame() {
       showToast(`Jawaban benar! ${playerName(info.playerId)} lolos dari ular.`, 'good', 'fa-solid fa-shield-halved');
       await sleep(HOP_DELAY);
       if (flowRef.current !== token) return;
-      nextTurn();
+      nextTurn('snake');
     } else {
       showFlash('bad', 'DIMAKAN ULAR');
       showToast(`${playerName(info.playerId)} turun ke kotak ${info.to}.`, 'bad', 'fa-solid fa-staff-snake');
+      sfx('snake');
       await slideTo(info.playerId, info.to, 'snake');
       if (flowRef.current !== token) return;
       if (rescueState(info.playerId, info.to)) return;
-      nextTurn();
+      nextTurn('snake');
     }
   };
 
@@ -2721,9 +3028,11 @@ function SnakesLaddersGame() {
 
   const canFireNow = () =>
     gameState === 'playing' &&
+    questionOpen &&
     !busy &&
     !revealed &&
     !snakeLadder &&
+    !handoff &&
     !winner &&
     !finishedRef.current &&
     armedTurn === null &&
@@ -2814,11 +3123,16 @@ function SnakesLaddersGame() {
       if (board && board.resume) board.resume();
 
       const shielded = Boolean(shields[targetIdSafe]);
+      const cue = (name) => {
+        if (name === 'hit') sfx(shielded ? 'block' : slot.key);
+        else if (name === 'block') sfx('block');
+      };
       try {
         if (board && typeof board.strike === 'function') {
-          await board.strike(actorId, targetIdSafe, shielded ? 'block' : slot.key);
+          await board.strike(actorId, targetIdSafe, shielded ? 'block' : slot.key, { onCue: cue });
         } else {
           await sleep(400);
+          cue('hit');
         }
       } catch (error) {
         /* Visual tidak boleh menghentikan aturan. */
@@ -2833,7 +3147,6 @@ function SnakesLaddersGame() {
           delete next[targetIdSafe];
           return next;
         });
-        sfx('block');
         showFlash('good', 'DITAHAN SHIELD');
         showToast(
           `Shield ${playerName(targetIdSafe)} menyerap ${weapon.label}. Serangan batal.`,
@@ -2841,14 +3154,13 @@ function SnakesLaddersGame() {
           'fa-solid fa-shield-halved'
         );
       } else {
-        sfx(slot.key);
         if (slot.key === 'bomb' || slot.key === 'magnet') {
           const steps = slot.key === 'bomb' ? bombSteps() : MAGNET_STEPS;
           const from = posRef.current[targetIdSafe];
           const target = Math.max(1, from - steps);
           const back = from - target;
           if (board && typeof board.slide === 'function') {
-            await board.slide(targetIdSafe, from, target, 'snake');
+            await board.slide(targetIdSafe, from, target, 'snake', { durationMs: 900 });
             if (flowRef.current !== token) return;
           } else {
             await sleep(500);
@@ -2903,7 +3215,7 @@ function SnakesLaddersGame() {
         }
       }
 
-      await sleep(650);
+      await sleep(300);
       if (flowRef.current !== token) return;
 
       setMovingId(null);
@@ -2931,17 +3243,17 @@ function SnakesLaddersGame() {
       activeQuestion: question,
       revealed: alreadyRevealed,
       busy: isBusy,
+      questionOpen: isOpen,
       shields: shieldMap,
       penawarId: penawared,
       doubleId: doubled,
-      players: roster,
-      currentId: turnId,
-      questionThrown: thrown,
+      turnForId: answeringTurn,
+      currentId: activeTurn,
       locked: lockedMap,
     } = stateRef.current;
-    if (!question || alreadyRevealed || isBusy || finishedRef.current) return;
+    if (!question || alreadyRevealed || isBusy || !isOpen || finishedRef.current) return;
 
-    const playerId = thrown ? nextPlayerId(roster, turnId) : turnId;
+    const playerId = answeringTurn || activeTurn;
     const isCorrect = letter !== null && letter === question.correctAnswer;
     const hasShield = Boolean(shieldMap && shieldMap[playerId]);
     const hasPenawar = penawared === playerId;
@@ -2969,6 +3281,7 @@ function SnakesLaddersGame() {
     };
 
     if (isCorrect) {
+      sfx('correct');
       /* Efek kunci hanya memblokir langkah maju dari jawaban benar; soal
          bonus tangga dan uji ular tidak tersentuh. */
       if (isLocked) {
@@ -2979,7 +3292,7 @@ function SnakesLaddersGame() {
           'warn',
           'fa-solid fa-lock'
         );
-        later(() => nextTurn(), RESOLVE_DELAY);
+        later(() => nextTurn('locked'), RESOLVE_DELAY);
         return;
       }
       const steps = hasDouble ? question.reward * 2 : question.reward;
@@ -2995,6 +3308,7 @@ function SnakesLaddersGame() {
       return;
     }
 
+    sfx('wrong');
     showFlash('bad', timedOut ? 'WAKTU HABIS' : 'SALAH');
     // questionThrown sengaja dibiarkan sampai nextTurn() agar panel bantuan
     // tetap milik pemain yang menjawab selama jendela umpan balik.
@@ -3012,7 +3326,7 @@ function SnakesLaddersGame() {
         'good',
         'fa-solid fa-prescription-bottle-medical'
       );
-      later(() => nextTurn(), RESOLVE_DELAY + 300);
+      later(() => nextTurn('penawar'), RESOLVE_DELAY + 300);
       return;
     }
 
@@ -3024,7 +3338,7 @@ function SnakesLaddersGame() {
         return next;
       });
       showToast(`Shield melindungi ${playerName(playerId)} dari hukuman.`, 'good', 'fa-solid fa-shield-halved');
-      later(() => nextTurn(), RESOLVE_DELAY + 300);
+      later(() => nextTurn('shield'), RESOLVE_DELAY + 300);
       return;
     }
 
@@ -3041,8 +3355,9 @@ function SnakesLaddersGame() {
   /* ---------------- helps ---------------- */
 
   const useHelp = (helpKey) => {
-    if (!activeQuestion || revealed || busy || questionOwnerRef.current !== activeId) return;
-    const playerId = activeId;
+    if (!activeQuestion || revealed || busy || questionThrown || !questionOpen) return;
+    if (questionOwnerRef.current !== turnForId) return;
+    const playerId = turnForId;
     const bag = normalizeBag(helps[playerId]);
     const remaining = bag[helpKey];
 
@@ -3057,6 +3372,8 @@ function SnakesLaddersGame() {
         return { ...prev, [playerId]: { ...current, [helpKey]: current[helpKey] - 1 } };
       });
 
+    sfx('click');
+
     if (helpKey === 'throwQuestion') {
       if (questionThrown) {
         showToast('Soal ini sudah dilempar ke pemain berikutnya.', 'warn');
@@ -3065,8 +3382,23 @@ function SnakesLaddersGame() {
       const targetId = nextPlayerId(players, currentId);
       spend();
       setQuestionThrown(true);
-      setSelectedHelp('throwQuestion');
-      showToast(`Soal dilempar ke ${playerName(targetId)}!`, 'info', 'fa-solid fa-arrow-right-arrow-left');
+      setTurnForId(targetId);
+      setSelectedHelp(null);
+      setShowClue(false);
+      setPicked(null);
+      setRevealed(false);
+      setQuestionOpen(false);
+      setQuestionLeft(0);
+      setBusy(false);
+      if (questionIntervalRef.current) {
+        clearInterval(questionIntervalRef.current);
+        questionIntervalRef.current = null;
+      }
+      /* Penerima harus menekan "Siap" dulu; timer baru mulai penuh setelah
+         itu agar pelempar tidak bisa menjebak dengan sisa waktu. */
+      handoffDoneRef.current = null;
+      setHandoff({ playerId: targetId, mode: 'ready', reason: 'thrown' });
+      showToast(`Soal dilempar ke ${playerName(targetId)}. Timer mulai setelah dia siap.`, 'info', 'fa-solid fa-arrow-right-arrow-left');
       return;
     }
 
@@ -3143,6 +3475,8 @@ function SnakesLaddersGame() {
     setArmPick(null);
     pendingArmsRef.current = null;
     setCurrentId(players[0].id);
+    setTurnForId(players[0].id);
+    setHandoff(null);
     setGameSeconds(0);
     setWinner(null);
     setWinnerReason('');
@@ -3191,12 +3525,21 @@ function SnakesLaddersGame() {
           return;
         }
         if (snakeLadder) return;
+        if (handoff) return;
         if (showWinner) setShowWinner(false);
         return;
       }
 
+      if (handoff) {
+        if ((event.key === 'Enter' || event.key === ' ') && gameState === 'playing') {
+          event.preventDefault();
+          continueTurn();
+        }
+        return;
+      }
+
       if (armTarget || armPick) return;
-      if (gameState !== 'playing' || busy || !activeQuestion || revealed) return;
+      if (gameState !== 'playing' || busy || !activeQuestion || revealed || !questionOpen) return;
       if (event.target && ['INPUT', 'TEXTAREA'].includes(event.target.tagName)) return;
 
       const digit = ['1', '2', '3', '4'].indexOf(event.key);
@@ -3213,12 +3556,12 @@ function SnakesLaddersGame() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [gameState, busy, activeQuestion, revealed, confirmClear, snakeLadder, showWinner, resolveAnswer, armTarget, armPick]);
+  }, [gameState, busy, activeQuestion, revealed, confirmClear, snakeLadder, showWinner, resolveAnswer, armTarget, armPick, handoff, continueTurn, questionOpen]);
 
   useEffect(() => {
-    if (!(questionOpen || snakeLadder || showWinner || confirmClear || armTarget || armPick)) return undefined;
+    if (!(questionOpen || snakeLadder || showWinner || confirmClear || armTarget || armPick || handoff)) return undefined;
     const previous = document.activeElement;
-    const dialog = document.querySelector('.overlay-card, .modal');
+    const dialog = document.querySelector('.overlay-card, .modal, .turn-handoff-card');
     if (dialog) {
       if (!dialog.hasAttribute('tabindex')) dialog.setAttribute('tabindex', '-1');
       dialog.focus();
@@ -3226,7 +3569,7 @@ function SnakesLaddersGame() {
     return () => {
       if (previous && previous.focus) previous.focus();
     };
-  }, [questionOpen, snakeLadder, showWinner, confirmClear, armTarget, armPick]);
+  }, [questionOpen, snakeLadder, showWinner, confirmClear, armTarget, armPick, handoff]);
 
   /* ---------------- derived ---------------- */
 
@@ -3242,7 +3585,7 @@ function SnakesLaddersGame() {
   /* Pemilik soal terkunci (questionOwnerRef) agar pengecekan bantuan selalu
      sama dengan pemain yang kartunya sedang tampil. */
   const helpBlocked = (key) => {
-    if (!activeQuestion || revealed || busy) return true;
+    if (!activeQuestion || revealed || busy || questionThrown || !questionOpen) return true;
     const ownerId = questionOwnerRef.current;
     const bag = normalizeBag(helps[ownerId]);
     if (bag[key] <= 0) return true;
@@ -3393,11 +3736,11 @@ function SnakesLaddersGame() {
           </div>
 
           <div className="row" style={{ gap: '0.6rem' }}>
-            <div className={`clock ${activeQuestion && questionLeft <= 5 && !revealed ? 'danger' : ''}`}>
+            <div className={`clock ${activeQuestion && questionOpen && questionLeft <= 5 && !revealed ? 'danger' : ''}`}>
               <i className="fa-regular fa-hourglass-half" aria-hidden="true"></i>
               <div className="clock-text">
                 <div className="clock-label">Soal</div>
-                <div className="clock-value">{activeQuestion ? `${questionLeft}s` : '--'}</div>
+                <div className="clock-value">{activeQuestion && questionOpen ? `${questionLeft}s` : '--'}</div>
               </div>
             </div>
             <div className="clock">
@@ -3414,11 +3757,36 @@ function SnakesLaddersGame() {
                 setSoundOn(next);
                 if (next) ensureAudio();
               }}
-              aria-label={soundOn ? 'Matikan suara' : 'Nyalakan suara'}
+              aria-label={soundOn ? 'Matikan efek suara' : 'Nyalakan efek suara'}
               aria-pressed={!soundOn}
-              title={soundOn ? 'Matikan suara' : 'Nyalakan suara'}
+              title={soundOn ? 'Matikan efek suara' : 'Nyalakan efek suara'}
             >
               <i className={`fa-solid ${soundOn ? 'fa-volume-high' : 'fa-volume-xmark'}`} aria-hidden="true"></i>
+            </button>
+            <button
+              className="icon-btn"
+              onClick={() => {
+                const next = !musicOn;
+                setMusicOn(next);
+                if (next && gameState !== 'setup') {
+                  try {
+                    audioEngineRef.current && audioEngineRef.current.startBgm();
+                  } catch (error) {
+                    /* abaikan */
+                  }
+                } else {
+                  try {
+                    audioEngineRef.current && audioEngineRef.current.stopBgm();
+                  } catch (error) {
+                    /* abaikan */
+                  }
+                }
+              }}
+              aria-label={musicOn ? 'Matikan musik' : 'Nyalakan musik'}
+              aria-pressed={!musicOn}
+              title={musicOn ? 'Matikan musik latar' : 'Nyalakan musik latar'}
+            >
+              <i className={`fa-solid ${musicOn ? 'fa-music' : 'fa-volume-xmark'}`} aria-hidden="true"></i>
             </button>
             <button className="icon-btn" onClick={toggleFullscreen} aria-label="Layar penuh">
               <i className="fa-solid fa-expand" aria-hidden="true"></i>
@@ -3525,6 +3893,15 @@ function SnakesLaddersGame() {
           onPickArm={openArmPicker}
           positions={positions}
           bankLeft={bankLeft()}
+          helpsLocked={questionThrown}
+        />
+      )}
+
+      {handoff && gameState === 'playing' && (
+        <TurnHandoffBanner
+          info={handoff}
+          player={players.find((item) => item.id === handoff.playerId) || players[0]}
+          onContinue={continueTurn}
         />
       )}
 
