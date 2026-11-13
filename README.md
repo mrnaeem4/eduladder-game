@@ -3,6 +3,8 @@
 Game ular tangga edukatif untuk **2–4 pemain**, dioptimalkan untuk **Interactive Flat Panel 75" (4K)**.
 Tanpa build tool dan tanpa `node_modules` — semua dependensi dimuat lewat CDN.
 
+**Dikembangkan oleh: Ridwan Na'im, S.Kom.**
+
 ## Menjalankan
 
 1. Letakkan folder ini di `htdocs` (mis. `C:\xampp\htdocs\ulartangga`).
@@ -125,3 +127,27 @@ Bank soal, daftar pemain, dan preferensi pengacakan disimpan pada `sessionStorag
 
 - Ukuran dasar antarmuka mengikuti `clamp()` agar tetap proporsional dari 1080p hingga 4K.
 - Animasi dinonaktifkan otomatis bila sistem meminta `prefers-reduced-motion`.
+
+## Lisensi
+
+MIT License
+
+Copyright (c) 2026 Ridwan Na'im, S.Kom.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
