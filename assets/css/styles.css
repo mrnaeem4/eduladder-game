@@ -2717,6 +2717,35 @@ body.is-playing {
   font-size: clamp(0.95rem, 1vw, 1.2rem);
 }
 
+/* Gambar soal & pilihan: batasi ukurannya agar tidak mendominasi layar.
+   Nilai max-width + max-height membuat gambar tetap proporsional dan
+   tidak pernah tampil seukuran aslinya. */
+.question-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(100%, 26rem);
+  max-height: clamp(7rem, 20vh, 15rem);
+  margin: 0.15rem auto;
+  padding: 0.25rem;
+  object-fit: contain;
+  border-radius: 0.8rem;
+  background: rgba(248, 250, 252, 0.96);
+  box-shadow: 0 6px 20px rgba(2, 6, 23, 0.28);
+}
+
+.option-image {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: min(100%, 10rem);
+  max-height: clamp(3.5rem, 9vh, 6rem);
+  margin-top: 0.4rem;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  background: rgba(248, 250, 252, 0.96);
+}
+
 .overlay-answers {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -3249,6 +3278,11 @@ body.is-playing {
   .overlay-helps {
     flex: 1 1 100%;
   }
+
+  .question-image {
+    max-width: min(100%, 22rem);
+    max-height: clamp(6rem, 16vh, 12rem);
+  }
 }
 
 @media (max-width: 900px) {
@@ -3269,11 +3303,31 @@ body.is-playing {
   .overlay-helps-grid.defense {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .question-image {
+    max-width: min(100%, 18rem);
+    max-height: 10rem;
+  }
+
+  .option-image {
+    max-width: min(100%, 8rem);
+    max-height: 4.5rem;
+  }
 }
 
 @media (max-width: 640px) {
   .overlay-answers {
     grid-template-columns: 1fr;
+  }
+
+  .question-image {
+    max-width: 100%;
+    max-height: 9rem;
+  }
+
+  .option-image {
+    max-width: 100%;
+    max-height: 4rem;
   }
 
   .overlay-helps-grid,
