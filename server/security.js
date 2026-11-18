@@ -48,16 +48,37 @@ function safeEqualText(a, b) {
   return crypto.timingSafeEqual(left, right);
 }
 
-/* Sesi admin global (in-memory). Satu password untuk semua aksi admin. */
+/* Sesi admin global (in-memory). Satu password untuk semua aksi admin.
+   Default di bawah sama dengan perilaku sebelum konfigurasi .env. */
 const adminSessions = new Map();
-const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_SESSIONS = 200;
+
+const limits = {
+  sessionTtlMs: 12 * 60 * 60 * 1000,
+  maxAttempts: 5,
+  windowMs: 60 * 1000,
+};
+
+/* Dipanggil sekali dari server/index.js setelah konfigurasi divalidasi.
+   Bila tidak dipanggil (mis. test yang me-require modul ini langsung),
+   nilai default dipertahankan. */
+function configure(options) {
+  const opts = options || {};
+  const hours = Number(opts.sessionHours);
+  const attempts = Number(opts.loginMaxAttempts);
+  const seconds = Number(opts.loginWindowSeconds);
+  if (Number.isFinite(hours) && hours > 0) limits.sessionTtlMs = hours * 60 * 60 * 1000;
+  if (Number.isInteger(attempts) && attempts >= 1) limits.maxAttempts = attempts;
+  if (Number.isInteger(seconds) && seconds >= 1) limits.windowMs = seconds * 1000;
+  return { ...limits };
+}
 
 function issueAdminSession() {
   const token = crypto.randomBytes(32).toString('hex');
   if (adminSessions.size >= MAX_SESSIONS) pruneExpired();
-  adminSessions.set(token, Date.now() + SESSION_TTL_MS);
-  return { token, expiresAt: Date.now() + SESSION_TTL_MS };
+  const expiresAt = Date.now() + limits.sessionTtlMs;
+  adminSessions.set(token, expiresAt);
+  return { token, expiresAt };
 }
 
 function pruneExpired() {
@@ -87,8 +108,6 @@ function revokeAdminSession(token) {
 
 /* Rate limit percobaan login per IP. */
 const attempts = new Map();
-const MAX_ATTEMPTS = 5;
-const WINDOW_MS = 60 * 1000;
 const MAX_ATTEMPT_KEYS = 1000;
 
 function loginAllowed(ip) {
@@ -97,17 +116,17 @@ function loginAllowed(ip) {
   const entry = attempts.get(key);
   if (!entry || entry.resetAt < now) {
     if (attempts.size >= MAX_ATTEMPT_KEYS) pruneExpired();
-    attempts.set(key, { count: 0, resetAt: now + WINDOW_MS });
+    attempts.set(key, { count: 0, resetAt: now + limits.windowMs });
     return true;
   }
-  return entry.count < MAX_ATTEMPTS;
+  return entry.count < limits.maxAttempts;
 }
 
 function noteLoginFailure(ip) {
   const key = String(ip || 'unknown');
   const now = Date.now();
   const entry = attempts.get(key);
-  if (!entry || entry.resetAt < now) attempts.set(key, { count: 1, resetAt: now + WINDOW_MS });
+  if (!entry || entry.resetAt < now) attempts.set(key, { count: 1, resetAt: now + limits.windowMs });
   else entry.count += 1;
 }
 
@@ -125,6 +144,8 @@ function sanitizeName(name) {
 
 module.exports = {
   ROOM_ALPHABET,
+  configure,
+  limits,
   randomRoomCode,
   randomToken,
   hashPassword,

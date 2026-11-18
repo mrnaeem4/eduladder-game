@@ -15,6 +15,7 @@
     const [toasts, setToasts] = useState([]);
     const [flash, setFlash] = useState(null);
     const [scoreFloats, setScoreFloats] = useState([]);
+    const [, setPublicBaseVersion] = useState(0);
     const [error, setError] = useState('');
     const [adminSession, setAdminSession] = useState(() => Net.loadAdminSession());
     const [soundOn, setSoundOn] = useState(() => Net.loadPref('sfx', true));
@@ -41,6 +42,19 @@
         Net.saveAdminSession(next);
         return next;
       });
+    }, []);
+
+    /* Ambil URL publik untuk QR/link join sebelum lobi dirender. */
+    useEffect(() => {
+      const loadConfig = Net.loadServerConfig;
+      if (!loadConfig) return undefined;
+      let active = true;
+      loadConfig()
+        .then((base) => {
+          if (active && base) setPublicBaseVersion((v) => v + 1);
+        })
+        .catch(() => {});
+      return () => { active = false; };
     }, []);
 
     useEffect(() => {

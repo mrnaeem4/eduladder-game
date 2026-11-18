@@ -8,10 +8,32 @@ Butuh **Node.js 22.5+** (memakai modul `node:sqlite` bawaan).
 
 ```powershell
 npm install
-$env:EDULADDER_ADMIN_PASSWORD="rahasia-anda"; npm start
+Copy-Item .env.example .env    # Git Bash: cp .env.example .env
+# buka .env dan isi EDULADDER_ADMIN_PASSWORD
+npm start
 ```
 
-Server hanya berjalan bila `EDULADDER_ADMIN_PASSWORD` diset. Password itu dipakai untuk login panel admin.
+Server hanya berjalan bila `EDULADDER_ADMIN_PASSWORD` diset. Password itu dipakai untuk login panel admin. Konfigurasi dibaca dari `.env` (melalui `dotenv`); variabel lingkungan yang sudah ada (CI/PaaS) tidak ditimpa oleh file.
+
+## Konfigurasi (`.env`)
+
+Salin `.env.example` lalu sesuaikan. Nilai tidak valid membuat server berhenti saat start dengan daftar masalah yang jelas.
+
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `PORT` | `3000` | Port HTTP, 1–65535. |
+| `HOST` | `0.0.0.0` | Alamat bind; `0.0.0.0` agar bisa diakses dari LAN. |
+| `EDULADDER_ADMIN_PASSWORD` | *(wajib)* | Password login panel admin. |
+| `EDULADDER_DB` | `server/data/eduladder.db` | Lokasi file SQLite. |
+| `EDULADDER_CORS_ORIGIN` | `*` | `*` atau daftar origin dipisah koma (`https://a.id,https://b.id`). |
+| `EDULADDER_SESSION_HOURS` | `12` | Masa berlaku sesi admin (jam, maks 168). |
+| `EDULADDER_LOGIN_MAX_ATTEMPTS` | `5` | Percobaan login gagal per IP. |
+| `EDULADDER_LOGIN_WINDOW_SECONDS` | `60` | Jendela waktu rate limit login (detik). |
+| `EDULADDER_PUBLIC_URL` | *(kosong)* | URL publik untuk QR/link join, mis. `http://192.168.1.10:3000`. Kosong = ikuti alamat browser. |
+| `EDULADDER_JSON_LIMIT` | `2mb` | Batas body JSON (simpan bank soal). |
+| `EDULADDER_CSV_LIMIT` | `1mb` | Batas unggah CSV bank soal. |
+
+`.env` tidak di-commit; hanya `.env.example` yang ikut repositori. Endpoint publik `GET /api/config` mengirim hanya `publicUrl` (tanpa rahasia) agar klien memakai host yang benar di balik reverse proxy/LAN.
 
 Setelah start, terminal menampilkan:
 
@@ -22,8 +44,6 @@ Admin   : http://localhost:3000/admin
 ```
 
 Pemain membuka alamat **Jaringan** (atau memindai QR di layar lobi), memasukkan kode room dan nama.
-
-Variabel lingkungan: `PORT` (default 3000), `HOST` (default `0.0.0.0`), `EDULADDER_DB` (lokasi file SQLite).
 
 ## Alur pemakaian
 
@@ -80,9 +100,11 @@ Kolom: `Room;Waktu;Jenis;Pertanyaan;Pemain;Slot;Karakter;Jawaban;Teks Jawaban;Ku
 
 ```
 index.html              # memuat CDN + shared/engine.js + client/*.jsx
+.env.example            # contoh konfigurasi; salin menjadi .env
 shared/engine.js        # aturan permainan murni (dipakai server & browser)
 server/
   index.js              # Express + Socket.IO + REST + static
+  config.js             # baca & validasi konfigurasi .env (gagal cepat)
   rooms.js              # kelas Room & RoomManager (memori + persistensi)
   room-store.js         # tulis/baca room, checkpoint, riwayat ke SQLite
   db.js                 # skema & CRUD bank soal (node:sqlite)
@@ -105,7 +127,7 @@ test/                   # node:test: engine + persistensi/pemulihan
 
 ## Keamanan
 
-- Panel admin dilindungi satu password global; sesi 12 jam, percobaan login dibatasi 5/menit per IP.
+- Panel admin dilindungi satu password global; masa sesi dan batas percobaan login dapat diatur lewat `.env` (`EDULADDER_SESSION_HOURS`, `EDULADDER_LOGIN_MAX_ATTEMPTS`, `EDULADDER_LOGIN_WINDOW_SECONDS`).
 - Semua aksi admin lewat REST/socket diverifikasi terhadap sesi.
 - Kunci jawaban tidak pernah dikirim ke klien sebelum soal dijawab.
 - Server memvalidasi setiap aksi: fase, pemilik giliran, kuota, target senjata.

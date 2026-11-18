@@ -4,6 +4,36 @@ window.Net = (function () {
     ? window.io({ autoConnect: false, transports: ['websocket', 'polling'] })
     : null;
 
+  /* Basis URL publik untuk QR/link join, dikirim server lewat /api/config.
+     Di-cache di localStorage agar QR benar sejak render pertama. */
+  const PUBLIC_URL_KEY = 'eduladder_public_url';
+  let PUBLIC_BASE = (function () {
+    try {
+      return localStorage.getItem(PUBLIC_URL_KEY) || '';
+    } catch (error) {
+      return '';
+    }
+  })();
+
+  function setPublicBase(value) {
+    PUBLIC_BASE = typeof value === 'string' && value.trim() ? value.trim().replace(/\/+$/, '') : '';
+    try {
+      if (PUBLIC_BASE) localStorage.setItem(PUBLIC_URL_KEY, PUBLIC_BASE);
+      else localStorage.removeItem(PUBLIC_URL_KEY);
+    } catch (error) {
+      /* localStorage bisa diblokir; abaikan. */
+    }
+    return PUBLIC_BASE;
+  }
+
+  /* Ambil konfigurasi publik dari server. Mengembalikan nilai terbaru. */
+  function loadServerConfig() {
+    return fetch('/api/config', { headers: { Accept: 'application/json' } })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setPublicBase(data && data.publicUrl ? data.publicUrl : ''))
+      .catch(() => PUBLIC_BASE);
+  }
+
   function connect() {
     if (!socket) return null;
     if (!socket.connected) socket.connect();
@@ -182,7 +212,7 @@ window.Net = (function () {
   }
 
   function joinUrl(code) {
-    const url = new URL(window.location.href);
+    const url = PUBLIC_BASE ? new URL(PUBLIC_BASE.replace(/\/+$/, '') + '/') : new URL(window.location.href);
     url.pathname = '/';
     url.search = `?room=${encodeURIComponent(code)}`;
     return url.toString();
@@ -193,6 +223,7 @@ window.Net = (function () {
     connect,
     request,
     downloadFile,
+    loadServerConfig,
     savePlayerToken,
     loadPlayerToken,
     saveAdminSession,

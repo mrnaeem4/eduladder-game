@@ -1,5 +1,9 @@
 'use strict';
 
+/* Muat .env paling awal, sebelum modul lain membaca process.env.
+   Tanpa `override`: env dari CI/PaaS tetap menang atas isi file. */
+require('dotenv').config();
+
 const http = require('http');
 const os = require('os');
 const path = require('path');
@@ -12,19 +16,28 @@ const store = require('./room-store');
 const security = require('./security');
 const { RoomManager } = require('./rooms');
 const { buildAnswersCsv, answerFileName } = require('./answers-csv');
+const { loadConfig, assertConfig } = require('./config');
 
 const ROOT = path.join(__dirname, '..');
-const PORT = Number(process.env.PORT) || 3000;
-const HOST = process.env.HOST || '0.0.0.0';
-const ADMIN_PASSWORD = process.env.EDULADDER_ADMIN_PASSWORD || '';
+const loaded = loadConfig(process.env);
+const config = assertConfig(loaded);
+const PORT = config.port;
+const HOST = config.host;
+const ADMIN_PASSWORD = config.adminPassword;
+
+security.configure({
+  sessionHours: config.sessionHours,
+  loginMaxAttempts: config.loginMaxAttempts,
+  loginWindowSeconds: config.loginWindowSeconds,
+});
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, { cors: { origin: config.corsOrigin } });
 const manager = new RoomManager();
 
-app.use(express.json({ limit: '2mb' }));
-app.use(express.text({ type: ['text/csv', 'text/plain'], limit: '1mb' }));
+app.use(express.json({ limit: config.jsonLimit }));
+app.use(express.text({ type: ['text/csv', 'text/plain'], limit: config.csvLimit }));
 
 app.use('/assets', express.static(path.join(ROOT, 'assets')));
 app.use('/client', express.static(path.join(ROOT, 'client')));
@@ -319,6 +332,12 @@ app.delete('/api/history/:id', requireAdmin, (req, res) => {
   return res.json({ ok: true });
 });
 
+/* Konfigurasi publik untuk klien (QR/link join). Tanpa rahasia. */
+app.get('/api/config', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ publicUrl: config.publicUrl || null });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, rooms: manager.size(), port: PORT, addresses: lanAddresses() });
 });
@@ -526,24 +545,19 @@ io.on('connection', (socket) => {
 /* Start                                                               */
 /* ------------------------------------------------------------------ */
 
-if (!ADMIN_PASSWORD) {
-  console.error('');
-  console.error('  [BERHENTI] EDULADDER_ADMIN_PASSWORD belum diset.');
-  console.error('  Jalankan: $env:EDULADDER_ADMIN_PASSWORD="rahasia"; npm start');
-  console.error('');
-  process.exit(1);
-}
-
+/* Password admin sudah divalidasi oleh assertConfig() di atas. */
 db.open();
 manager.restoreAll(io);
 
 server.listen(PORT, HOST, () => {
   const addresses = lanAddresses();
+  const publicUrl = config.publicUrl ? config.publicUrl.replace(/\/+$/, '') : '';
   console.log('');
   console.log('  EduLadder Battle — server online');
   console.log(`  Lokal   : http://localhost:${PORT}/`);
   addresses.forEach((ip) => console.log(`  Jaringan: http://${ip}:${PORT}/`));
   console.log(`  Admin   : http://localhost:${PORT}/admin`);
+  if (publicUrl) console.log(`  Publik  : ${publicUrl}/`);
   console.log(`  Room aktif dipulihkan: ${manager.size()}`);
   console.log('');
 });

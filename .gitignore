@@ -5,3 +5,8 @@
 node_modules/
 server/data/
 *.log
+
+# Konfigurasi lokal (jangan pernah commit rahasia)
+.env
+.env.*
+!.env.example
