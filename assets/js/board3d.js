@@ -237,6 +237,31 @@
 
   const styleFor = (slot) => SLOT_STYLES[slot] || SLOT_STYLES[1];
 
+  /* Konversi palet karakter dari engine (warna CSS hex) menjadi palet internal
+     Three.js. Bentuk 3D tetap 4; hanya warna yang berbeda. */
+  function hexToInt(value, fallback) {
+    const text = String(value || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(text)) return parseInt(text.slice(1), 16);
+    if (/^#[0-9a-f]{3}$/i.test(text)) {
+      return parseInt(text.slice(1).split('').map((ch) => ch + ch).join(''), 16);
+    }
+    return fallback;
+  }
+
+  function paletteFromCharacter(character) {
+    if (!character) return null;
+    const main = hexToInt(character.color, 0x2563eb);
+    return {
+      form: character.form || 'robot',
+      main,
+      light: hexToInt(character.light, main),
+      deep: hexToInt(character.deep, 0x1e3a8a),
+      label: character.color || '#1d4ed8',
+      ring: main,
+      accent: hexToInt(character.light, 0xfbbf24),
+    };
+  }
+
   const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
   const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -602,6 +627,63 @@
     star: buildStar,
   };
 
+  /* Token ringkas untuk room ramai (>6 pemain): disc berwarna + nomor. */
+  function buildCompactToken(THREE, style) {
+    const group = new THREE.Group();
+    const discGeo = new THREE.CylinderGeometry(0.27, 0.27, 0.1, 26);
+    const discMat = new THREE.MeshStandardMaterial({
+      color: style.main,
+      roughness: 0.42,
+      metalness: 0.25,
+      emissive: style.deep,
+      emissiveIntensity: 0.18,
+    });
+    const disc = new THREE.Mesh(discGeo, discMat);
+    disc.position.y = 0.1;
+    disc.castShadow = true;
+    disc.receiveShadow = true;
+    group.add(disc);
+
+    const rimGeo = new THREE.TorusGeometry(0.27, 0.03, 8, 30);
+    const rimMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.y = 0.155;
+    group.add(rim);
+
+    return { group, materials: [discMat, rimMat], geometries: [discGeo, rimGeo] };
+  }
+
+  function makeTokenNumberSprite(THREE, number) {
+    const size = 128;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, size, size);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 84px "Segoe UI", "Inter", Arial, sans-serif';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 12;
+    ctx.strokeStyle = 'rgba(15,23,42,0.9)';
+    ctx.strokeText(String(number), size / 2, size / 2 + 4);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(String(number), size / 2, size / 2 + 4);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    if (THREE.sRGBEncoding !== undefined) texture.encoding = THREE.sRGBEncoding;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(0.32, 0.32, 1);
+    sprite.renderOrder = 42;
+    sprite.userData.dispose = () => {
+      texture.dispose();
+      material.dispose();
+    };
+    return sprite;
+  }
+
   class Board3D {
     static supported() {
       try {
@@ -642,17 +724,29 @@
 
       const rawPlayers = Array.isArray(this.options.players) && this.options.players.length ? this.options.players : DEFAULT_PLAYERS;
       this.players = [];
-      rawPlayers.slice(0, 4).forEach((player) => {
+      rawPlayers.slice(0, WIN_CELL).forEach((player) => {
         const slot = Number(player && player.slot);
-        if (!Number.isInteger(slot) || slot < 1 || slot > 4) return;
+        if (!Number.isInteger(slot) || slot < 1 || slot > 25) return;
         if (this.players.some((item) => item.slot === slot)) return;
+        const char = Number(player && player.char);
         this.players.push({
           id: (player && player.id) || `p${slot}`,
           slot,
+          char: Number.isInteger(char) && char >= 1 && char <= 10 ? char : slot,
           name: ((player && player.name) || '').trim() || `Pemain ${slot}`,
         });
       });
       if (this.players.length < 2) this.players = DEFAULT_PLAYERS.map((player) => ({ ...player }));
+
+      this.characterStyles = {};
+      (Array.isArray(this.options.characterStyles) ? this.options.characterStyles : []).forEach((character) => {
+        const palette = paletteFromCharacter(character);
+        const id = Number(character && character.id);
+        if (palette && Number.isInteger(id) && id >= 1) this.characterStyles[id] = palette;
+      });
+      /* Di atas 6 pemain, model penuh terlalu padat: pakai token ringkas
+         (disc berwarna + nomor urut). */
+      this.compact = this.players.length > 6;
 
       this.cells = {};
       this.players.forEach((player) => {
@@ -1031,21 +1125,36 @@
       });
     }
 
+    _styleFor(player) {
+      const char = Number(player && player.char);
+      const slot = Number(player && player.slot);
+      const id = Number.isInteger(char) && char >= 1 ? char : slot;
+      return this.characterStyles[id] || styleFor(id);
+    }
+
     _buildCharacters() {
       const THREE = this.THREE;
       const total = Math.max(1, this.players.length);
 
-      const makeChar = (player, model, style, index) => {
+      const makeChar = (player, model, style, index, compact) => {
         const root = new THREE.Group();
         const bob = new THREE.Group();
         bob.add(model.group);
         root.add(bob);
 
-        const label = makeLabelSprite(THREE, player.name, style.label);
-        label.position.set(0, 0.95, 0);
-        root.add(label);
+        let label = null;
+        if (!compact) {
+          label = makeLabelSprite(THREE, player.name, style.label);
+          label.position.set(0, 0.95, 0);
+          root.add(label);
+        } else {
+          const numberSprite = makeTokenNumberSprite(THREE, player.slot);
+          numberSprite.position.set(0, 0.46, 0);
+          root.add(numberSprite);
+          this._track({ dispose: () => { if (numberSprite.userData.dispose) numberSprite.userData.dispose(); } });
+        }
 
-        const ringGeo = new THREE.RingGeometry(0.28, 0.38, 28);
+        const ringGeo = new THREE.RingGeometry(compact ? 0.32 : 0.28, compact ? 0.4 : 0.38, 28);
         const ringMat = new THREE.MeshBasicMaterial({ color: style.ring, transparent: true, opacity: 0.85, side: THREE.DoubleSide });
         const ring = new THREE.Mesh(ringGeo, ringMat);
         ring.rotation.x = -Math.PI / 2;
@@ -1055,21 +1164,23 @@
 
         // Lencana melayang untuk pertahanan aktif (Shield / Penawar).
         const badges = {};
-        BADGE_KINDS.forEach((kind, badgeIndex) => {
-          const tex = createBadgeTexture(THREE, kind, BADGE_TINTS[kind]);
-          const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
-          const sprite = new THREE.Sprite(mat);
-          sprite.scale.set(0.34, 0.34, 1);
-          sprite.renderOrder = 41;
-          const spread = (badgeIndex - (BADGE_KINDS.length - 1) / 2) * 0.2;
-          sprite.position.set(spread, 0.98, 0);
-          sprite.visible = false;
-          sprite.userData.baseY = 0.98;
-          sprite.userData.phase = badgeIndex * Math.PI;
-          root.add(sprite);
-          this._track({ dispose: () => { tex.dispose(); mat.dispose(); } });
-          badges[kind] = sprite;
-        });
+        if (!compact) {
+          BADGE_KINDS.forEach((kind, badgeIndex) => {
+            const tex = createBadgeTexture(THREE, kind, BADGE_TINTS[kind]);
+            const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false });
+            const sprite = new THREE.Sprite(mat);
+            sprite.scale.set(0.34, 0.34, 1);
+            sprite.renderOrder = 41;
+            const spread = (badgeIndex - (BADGE_KINDS.length - 1) / 2) * 0.2;
+            sprite.position.set(spread, 0.98, 0);
+            sprite.visible = false;
+            sprite.userData.baseY = 0.98;
+            sprite.userData.phase = badgeIndex * Math.PI;
+            root.add(sprite);
+            this._track({ dispose: () => { tex.dispose(); mat.dispose(); } });
+            badges[kind] = sprite;
+          });
+        }
 
         this.scene.add(root);
         this.disposables.push({
@@ -1078,18 +1189,21 @@
             (model.geometries || []).forEach((geometry) => geometry.dispose());
           },
         });
-        this._track({ dispose: () => { ringGeo.dispose(); ringMat.dispose(); if (label.userData.dispose) label.userData.dispose(); } });
+        this._track({ dispose: () => { ringGeo.dispose(); ringMat.dispose(); if (label && label.userData.dispose) label.userData.dispose(); } });
 
         /* Wajah emoji: sprite di depan karakter, tersembunyi saat idle. */
-        const anchor = FACE_ANCHORS[style.form] || FACE_ANCHORS.robot;
-        const faceMat = new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false });
-        const face = new THREE.Sprite(faceMat);
-        face.scale.set(0.34, 0.34, 1);
-        face.renderOrder = 41;
-        face.position.set(0, anchor.y, anchor.z);
-        face.visible = false;
-        root.add(face);
-        this._track({ dispose: () => faceMat.dispose() });
+        let face = null;
+        if (!compact) {
+          const anchor = FACE_ANCHORS[style.form] || FACE_ANCHORS.robot;
+          const faceMat = new THREE.SpriteMaterial({ transparent: true, depthTest: false, depthWrite: false });
+          face = new THREE.Sprite(faceMat);
+          face.scale.set(0.34, 0.34, 1);
+          face.renderOrder = 41;
+          face.position.set(0, anchor.y, anchor.z);
+          face.visible = false;
+          root.add(face);
+          this._track({ dispose: () => faceMat.dispose() });
+        }
 
         return {
           root,
@@ -1099,6 +1213,7 @@
           ring,
           badges,
           face,
+          style,
           faceToken: 0,
           form: style.form,
           slot: player.slot,
@@ -1110,9 +1225,13 @@
 
       this.chars = {};
       this.players.forEach((player, index) => {
-        const style = styleFor(player.slot);
+        const style = this._styleFor(player);
+        if (this.compact) {
+          this.chars[player.id] = makeChar(player, buildCompactToken(THREE, style), style, index, true);
+          return;
+        }
         const builder = MODEL_BUILDERS[style.form] || buildRobot;
-        this.chars[player.id] = makeChar(player, builder(THREE, style), style, index);
+        this.chars[player.id] = makeChar(player, builder(THREE, style), style, index, false);
       });
     }
 
@@ -1182,6 +1301,24 @@
       });
       const touched = new Set(this.players.map((player) => this.cells[player.id]));
       touched.forEach((cell) => this._reflowCell(cell, true));
+    }
+
+    /* Posisi layar (piksel, relatif terhadap kontainer) di atas kepala
+       karakter. Dipakai React untuk floater +N/−N. */
+    getPlayerScreenPosition(id) {
+      const ch = this.chars && this.chars[id];
+      if (!ch || !this.camera || !this.renderer) return null;
+      const T = this.THREE;
+      this.camera.updateMatrixWorld();
+      const point = new T.Vector3(ch.root.position.x, ch.root.position.y + 1.05, ch.root.position.z);
+      point.project(this.camera);
+      if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
+      const width = this.container.clientWidth || this.renderer.domElement.clientWidth || window.innerWidth;
+      const height = this.container.clientHeight || this.renderer.domElement.clientHeight || window.innerHeight;
+      return {
+        x: (point.x * 0.5 + 0.5) * width,
+        y: (-point.y * 0.5 + 0.5) * height,
+      };
     }
 
     /* ---------------- animasi ---------------- */
@@ -1323,7 +1460,7 @@
         ch.face.visible = false;
         return;
       }
-      const style = styleFor(ch.slot);
+      const style = ch.style || styleFor(ch.slot);
       const key = `${ch.slot}:${kind}`;
       this.faceTextures = this.faceTextures || {};
       if (!this.faceTextures[key]) {

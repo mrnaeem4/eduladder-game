@@ -1,2 +1,7 @@
 # Local tooling (review/plan artifacts).
 /.kilo/
+
+# Dependencies & runtime data
+node_modules/
+server/data/
+*.log

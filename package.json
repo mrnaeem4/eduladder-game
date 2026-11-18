@@ -1,0 +1,23 @@
+{
+  "name": "eduladder-battle",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Game ular tangga edukatif online multi-komputer dengan admin room dan bank soal.",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "test": "node --test test/engine.test.js test/helps.test.js test/persistence.test.js test/client-load.test.js test/room-finish.test.js test/room-question.test.js test/characters.test.js test/answers.test.js",
+    "simulate": "node server/scripts/simulate.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}
