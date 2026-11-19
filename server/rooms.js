@@ -5,6 +5,11 @@ const security = require('./security');
 const store = require('./room-store');
 const { runSteps } = require('./game-loop');
 
+/* Reaksi lobi: kunci valid, throttle per pemain, dan TTL callout. */
+const REACTION_KEYS = ['thumbs', 'clap', 'party', 'wow', 'fire', 'heart'];
+const REACTION_COOLDOWN_MS = 2000;
+const REACTION_TTL_MS = 4000;
+
 class Room {
   constructor(opts) {
     this.code = opts.code;
@@ -16,6 +21,7 @@ class Room {
       shuffle: config.shuffle !== false,
       helpQuotas: E.sanitizeHelpQuotas(config.helpQuotas, E.DEFAULT_HELPS()),
       maxPlayers: E.sanitizeMaxPlayers(config.maxPlayers),
+      allowLateJoin: config.allowLateJoin !== false,
     };
     this.players = opts.players || [];
     this.spectators = [];
@@ -25,6 +31,13 @@ class Room {
     this.runToken = 0;
     this.io = null;
     this.timer = null;
+    this.graceTimers = new Map();
+    this.reactions = [];
+    this.lastReactionAt = new Map();
+    this.closed = false;
+    this.graceMs = typeof opts.graceMs === 'number' ? Math.max(0, opts.graceMs) : 10000;
+    this.lateJoinAllowance = Math.max(0, Number(opts.lateJoinAllowance) || 0);
+    this.lateJoined = 0;
     this.startedAt = opts.startedAt || 0;
     this.lastActivity = Date.now();
     this.persist = opts.persist !== false;
@@ -32,12 +45,37 @@ class Room {
     this.intent = null;
     (this.players || []).forEach((player) => {
       player.connected = false;
+      if (!player.status) player.status = player.resting ? 'resting' : 'active';
       if (player.token) this.tokens.set(player.token, player.id);
     });
   }
 
   setIo(io) {
     this.io = io;
+  }
+
+  /* ---------------- reaksi lobi (ephemeral) ---------------- */
+
+  react(playerId, key) {
+    if (!REACTION_KEYS.includes(key)) return { error: 'invalid' };
+    if (!this.identityOfPlayer(playerId)) return { error: 'not_member' };
+    if (this.state && this.state.phase !== 'lobby') return { error: 'bad_phase' };
+    const now = Date.now();
+    const last = this.lastReactionAt.get(playerId) || 0;
+    if (now - last < REACTION_COOLDOWN_MS) return { error: 'rate_limited' };
+    this.lastReactionAt.set(playerId, now);
+    const reaction = { id: `${now}-${Math.floor(Math.random() * 1000)}`, playerId, key, at: now };
+    this.reactions.push(reaction);
+    /* TTL 4 detik + maksimal 50 antrean agar memori tetap kecil. */
+    this.reactions = this.reactions.filter((item) => now - item.at < REACTION_TTL_MS).slice(-50);
+    if (this.io) {
+      this.sockets.forEach((socketId) => this.io.to(socketId).emit('lobby:reaction', reaction));
+    }
+    return { ok: true, reaction };
+  }
+
+  identityOfPlayer(id) {
+    return this.playerById(id) || null;
   }
 
   touch() {
@@ -147,11 +185,14 @@ class Room {
         if (player) {
           player.connected = false;
           /* Pemain yang keluar saat masih di lobi langsung dilepas; saat
-             permainan berjalan dia tetap ada agar bisa reconnect. */
+             permainan berjalan dia mendapat masa tenggang untuk reconnect,
+             setelah itu dinyatakan istirahat dan gilirannya dilewati. */
           if (!this.isPlaying()) {
             this.players = this.players.filter((item) => item.id !== player.id);
             this.tokens.delete(player.token);
             this.persistPlayers();
+          } else if (player.status !== 'resting') {
+            this.scheduleGrace(player.id);
           }
         }
       } else if (identity.role === 'spectator') {
@@ -168,6 +209,75 @@ class Room {
     }
   }
 
+  /* ---------------- masa tenggang terputus ---------------- */
+
+  scheduleGrace(playerId) {
+    this.clearGrace(playerId);
+    if (!playerId) return;
+    if (this.graceMs <= 0) {
+      const player = this.playerById(playerId);
+      if (player) player.restingSince = Date.now();
+      this.playerLeft(playerId);
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.graceTimers.delete(playerId);
+      this.playerLeft(playerId);
+    }, this.graceMs);
+    if (timer.unref) timer.unref();
+    this.graceTimers.set(playerId, timer);
+  }
+
+  clearGrace(playerId) {
+    const timer = this.graceTimers.get(playerId);
+    if (timer) clearTimeout(timer);
+    this.graceTimers.delete(playerId);
+  }
+
+  /* Pemain melewati masa tenggang: tandai istirahat dan alihkan giliran bila
+     soal sedang miliknya. Tidak ada hukuman. */
+  playerLeft(playerId) {
+    const player = this.playerById(playerId);
+    if (!player) return { error: 'not_found' };
+    if (player.kicked) return { error: 'kicked' };
+    /* Sudah reconnect sebelum timer berbunyi. */
+    if (this.sockets.has(playerId)) return { error: 'connected' };
+    if (!this.state || !this.isPlaying()) return { error: 'bad_phase' };
+    if (player.status === 'resting') return { error: 'already_resting' };
+
+    player.status = 'resting';
+    player.restingSince = Date.now();
+    this.persistPlayers();
+    const steps = [];
+    E.handlePlayerLeft(this.state, playerId, steps);
+    if (steps.length) this.run(steps, { type: 'player-left', playerId });
+    else this.broadcastSnapshot();
+    return { ok: true };
+  }
+
+  /* Kembalikan pemain dari istirahat (reconnect). */
+  restorePlayer(player) {
+    if (!player) return false;
+    this.clearGrace(player.id);
+    player.connected = true;
+    player.restingSince = 0;
+    if (player.status !== 'resting') {
+      player.status = 'active';
+      return false;
+    }
+    player.status = 'active';
+    this.persistPlayers();
+    if (this.state && this.isPlaying()) {
+      const steps = [];
+      E.handlePlayerBack(this.state, player.id, steps);
+      if (steps.length) {
+        this.run(steps, { type: 'player-back', playerId: player.id });
+        return true;
+      }
+    }
+    return true;
+  }
+
   joinPlayer(name, slot, token, requestedChar) {
     const restored = this.playerByToken(token);
     if (restored) {
@@ -175,12 +285,48 @@ class Room {
       restored.connected = true;
       if (name) restored.name = security.sanitizeName(name) || restored.name;
       if (!restored.char) restored.char = E.assignCharacter(this.players, requestedChar);
-      return { player: restored, token: restored.token };
+      /* Reconnect dari status istirahat: aktif lagi tanpa denda. */
+      const back = this.restorePlayer(restored);
+      return { player: restored, token: restored.token, back };
     }
 
     const maxPlayers = E.sanitizeMaxPlayers(this.config && this.config.maxPlayers);
-    if (this.isPlaying() || this.players.length >= maxPlayers) {
+    if (this.players.length >= maxPlayers) {
       return { spectator: this.joinSpectator(name) };
+    }
+
+    if (this.isPlaying()) {
+      /* Join di tengah permainan hanya bila room mengizinkannya dan jatah
+         late-join room masih tersisa (diatur saat room dibuat). */
+      if (this.config.allowLateJoin === false) return { spectator: this.joinSpectator(name) };
+      if (this.lateJoined >= this.lateJoinAllowance) return { spectator: this.joinSpectator(name) };
+      const safeName = security.sanitizeName(name);
+      if (!safeName) return { error: 'name_required' };
+      const target = this.freeSlot();
+      if (!target) return { spectator: this.joinSpectator(name) };
+      const player = {
+        id: `p${target}`,
+        slot: target,
+        char: E.assignCharacter(this.players, requestedChar),
+        name: safeName,
+        token: security.randomToken(),
+        connected: true,
+        kicked: false,
+        status: 'active',
+        restingSince: 0,
+        joinedMidGame: true,
+      };
+      this.players.push(player);
+      this.players.sort((a, b) => a.slot - b.slot);
+      this.tokens.set(player.token, player.id);
+      this.lateJoined += 1;
+      this.touch();
+      this.persistPlayers();
+      const steps = [];
+      E.addLatePlayer(this.state, player, steps);
+      if (steps.length) this.run(steps, { type: 'late-join', playerId: player.id });
+      else this.broadcastSnapshot();
+      return { player, token: player.token, lateJoin: true };
     }
 
     let target = Number(slot);
@@ -199,6 +345,8 @@ class Room {
       token: security.randomToken(),
       connected: true,
       kicked: false,
+      status: 'active',
+      restingSince: 0,
     };
     this.players.push(player);
     this.players.sort((a, b) => a.slot - b.slot);
@@ -244,7 +392,8 @@ class Room {
     if (player.kicked) return { error: 'kicked' };
     player.connected = true;
     if (name) player.name = security.sanitizeName(name) || player.name;
-    return { role: 'player', key: player.id, token };
+    const back = this.restorePlayer(player);
+    return { role: 'player', key: player.id, token, back };
   }
 
   updateConfig(patch) {
@@ -253,6 +402,8 @@ class Room {
     const next = { ...this.config };
     if (typeof patch.shuffle === 'boolean') next.shuffle = patch.shuffle;
     if (patch.helpQuotas) next.helpQuotas = E.sanitizeHelpQuotas(patch.helpQuotas, next.helpQuotas || E.DEFAULT_HELPS());
+    if (typeof patch.maxPlayers !== 'undefined') next.maxPlayers = E.sanitizeMaxPlayers(patch.maxPlayers);
+    /* allowLateJoin hanya diset saat room dibuat; di sini nilainya dipertahankan. */
     this.config = next;
     if (this.persist) store.insertRoom(this);
     this.broadcastSnapshot();
@@ -268,10 +419,13 @@ class Room {
       bankName: this.bankName,
       bankCount: this.questions.length,
       canEditConfig: !this.isPlaying(),
+      /* Jam server untuk koreksi countdown (lihat Net.trackServerNow). */
+      serverNow: Date.now(),
       config: {
         shuffle: this.config.shuffle !== false,
         helpQuotas: E.sanitizeHelpQuotas(this.config.helpQuotas, E.DEFAULT_HELPS()),
         maxPlayers: E.sanitizeMaxPlayers(this.config.maxPlayers),
+        allowLateJoin: this.config.allowLateJoin !== false,
       },
       players: this.players.map((item) => ({
         id: item.id,
@@ -279,7 +433,10 @@ class Room {
         char: item.char || 1,
         name: item.name,
         connected: Boolean(item.connected),
+        status: item.status || (item.resting ? 'resting' : 'active'),
+        joinedMidGame: Boolean(item.joinedMidGame),
       })),
+      restingIds: this.players.filter((item) => item.status === 'resting').map((item) => item.id),
       spectators: this.spectators.map((item) => ({ name: item.name, connected: Boolean(item.connected) })),
       you: {
         role: identity.role,
@@ -345,6 +502,7 @@ class Room {
     return {
       question: E.redactQuestion(info.question),
       deadline: info.deadline,
+      serverNow: Date.now(),
       bonus: Boolean(info.bonus),
       correct: this.state.revealed ? info.question.correctAnswer : null,
       picked: this.state.revealed ? this.state.picked : null,
@@ -467,7 +625,13 @@ class Room {
     const minimum = Math.max(E.MIN_QUESTIONS, this.players.length);
     if (this.questions.length < minimum) return { error: 'need_questions' };
 
-    const roster = this.players.map((item) => ({ id: item.id, slot: item.slot, char: item.char || 1, name: item.name }));
+    const roster = this.players.map((item) => ({
+      id: item.id,
+      slot: item.slot,
+      char: item.char || 1,
+      name: item.name,
+      resting: item.status === 'resting',
+    }));
     this.state = E.createGameState(roster, this.questions, {
       roomCode: this.code,
       shuffle: this.config.shuffle !== false,
@@ -475,6 +639,7 @@ class Room {
     });
     this.startedAt = Date.now();
     this.finishedAt = 0;
+    this.lateJoined = 0;
     this.status = 'playing';
     if (this.persist) store.setStatus(this, 'playing');
 
@@ -486,6 +651,8 @@ class Room {
 
   answer(playerId, letter, timedOut) {
     if (!this.state) return { error: 'no_game' };
+    /* Soal dijeda selama animasi serangan. */
+    if (this.state.attackFx) return { error: 'busy' };
     if (this.state.phase === 'bonus') {
       if (!this.state.snakeLadder || this.state.snakeLadder.playerId !== playerId) return { error: 'not_owner' };
       const correct = Boolean(this.state.snakeLadder.question) && letter === this.state.snakeLadder.question.correctAnswer;
@@ -568,6 +735,7 @@ class Room {
 
   useHelp(playerId, key) {
     if (!this.state || this.state.phase !== 'answering') return { error: 'bad_phase' };
+    if (this.state.attackFx) return { error: 'busy' };
     if (this.state.turnForId !== playerId) return { error: 'not_your_turn' };
     const steps = [];
     E.handleUseHelp(this.state, playerId, key, steps);
@@ -578,6 +746,7 @@ class Room {
 
   fireWeapon(playerId, uid, targetId) {
     if (!this.state || this.state.phase !== 'answering') return { error: 'bad_phase' };
+    if (this.state.attackFx) return { error: 'busy' };
     if (this.state.currentId !== playerId) return { error: 'not_your_turn' };
     const steps = [];
     E.handleFireWeapon(this.state, playerId, uid, targetId, steps);
@@ -622,11 +791,15 @@ class Room {
       this.broadcastSnapshot();
       return { ok: true };
     }
+    this.clearGrace(playerId);
+    player.status = 'left';
     this.persistPlayers();
+    /* Soal milik pemain yang dikeluarkan dialihkan tanpa hukuman; pemain
+       penonton giliran tetap diproses lewat alur sebelumnya. */
     if (this.state.phase === 'answering' && this.state.turnForId === playerId) {
       const steps = [];
-      E.handleAnswer(this.state, playerId, null, true, steps);
-      this.run(steps, { type: 'answer', playerId, letter: null, timedOut: true });
+      E.handlePlayerLeft(this.state, playerId, steps);
+      this.run(steps, { type: 'player-left', playerId });
       return { ok: true };
     }
     if (this.state.phase === 'handoff' && this.state.handoff && this.state.handoff.playerId === playerId) {
@@ -643,6 +816,10 @@ class Room {
      Room tetap tersimpan di SQLite dengan status 'finished' sehingga admin
      bisa melihatnya di daftar room, tetapi semua klien keluar dari sesi. */
   closeSession() {
+    this.closed = true;
+    this.graceTimers.forEach((timer) => clearTimeout(timer));
+    this.graceTimers.clear();
+    this.reactions = [];
     if (this.state && this.state.phase !== 'finished') {
       this.clearDeadline();
       this.state.phase = 'finished';
@@ -681,6 +858,11 @@ class Room {
 
   replay() {
     this.clearDeadline();
+    this.graceTimers.forEach((timer) => clearTimeout(timer));
+    this.graceTimers.clear();
+    this.reactions = [];
+    this.lastReactionAt.clear();
+    this.lateJoined = 0;
     this.state = null;
     this.startedAt = 0;
     this.finishedAt = 0;
@@ -689,6 +871,8 @@ class Room {
     this.players.forEach((item) => {
       item.kicked = false;
       item.connected = this.sockets.has(item.id);
+      item.status = 'active';
+      item.restingSince = 0;
     });
     if (this.persist) {
       store.resetForLobby(this);
@@ -728,6 +912,12 @@ class Room {
       else if (intent.type === 'weapon') E.handleFireWeapon(this.state, intent.playerId, intent.uid, intent.targetId, steps);
       else if (intent.type === 'help') E.handleUseHelp(this.state, intent.playerId, intent.key, steps);
       else if (intent.type === 'continue' || intent.type === 'kick-continue') E.handleContinue(this.state, intent.playerId, steps);
+      else if (intent.type === 'player-left') E.handlePlayerLeft(this.state, intent.playerId, steps);
+      else if (intent.type === 'player-back') E.handlePlayerBack(this.state, intent.playerId, steps);
+      else if (intent.type === 'late-join') {
+        const player = this.playerById(intent.playerId);
+        if (player) E.addLatePlayer(this.state, player, steps);
+      }
       if (steps.length) {
         this.run(steps, intent);
         return;
@@ -763,7 +953,16 @@ class Room {
       const duration = question ? question.duration : 15;
       if (!this.state.deadline || this.state.deadline < Date.now()) {
         this.state.deadline = Date.now() + duration * 1000;
+        this.state.deadlineSetAt = Date.now();
       }
+      /* Pemain yang tidak tersambung setelah restart diberi masa tenggang baru
+         agar sempat memuat ulang halaman. */
+      this.state.players.forEach((item) => {
+        if (item.resting) return;
+        if (this.sockets.has(item.id)) return;
+        const player = this.playerById(item.id);
+        if (player && player.status !== 'resting') this.scheduleGrace(item.id);
+      });
       this.scheduleDeadline();
     }
 
@@ -774,9 +973,20 @@ class Room {
 
 class RoomManager {
   constructor(options) {
+    const opts = options || {};
     this.rooms = new Map();
     this.evictTimers = new Map();
-    this.persist = !(options && options.persist === false);
+    this.persist = opts.persist !== false;
+    /* Masa tenggang pemain terputus (ms). Dapat diubah lewat configure(). */
+    this.graceMs = typeof opts.graceMs === 'number' ? Math.max(0, opts.graceMs) : 10000;
+  }
+
+  configure(options) {
+    const opts = options || {};
+    const grace = Number(opts.disconnectGraceSeconds);
+    if (Number.isFinite(grace) && grace >= 0) this.graceMs = Math.round(grace * 1000);
+    this.rooms.forEach((room) => { room.graceMs = this.graceMs; });
+    return { graceMs: this.graceMs };
   }
 
   createRoom(opts) {
@@ -792,7 +1002,10 @@ class RoomManager {
         shuffle: opts.shuffle !== false,
         helpQuotas: E.sanitizeHelpQuotas(opts.helpQuotas, E.DEFAULT_HELPS()),
         maxPlayers: E.sanitizeMaxPlayers(opts.maxPlayers),
+        allowLateJoin: opts.allowLateJoin !== false,
       },
+      graceMs: this.graceMs,
+      lateJoinAllowance: typeof opts.lateJoinAllowance === 'number' ? opts.lateJoinAllowance : E.sanitizeMaxPlayers(opts.maxPlayers),
       persist: this.persist,
     });
     room.manager = this;
@@ -822,6 +1035,7 @@ class RoomManager {
       players: record.players.filter((item) => !item.kicked),
       state: record.state,
       startedAt: record.startedAt,
+      graceMs: this.graceMs,
       persist: this.persist,
     });
     room.manager = this;
@@ -887,4 +1101,4 @@ class RoomManager {
   }
 }
 
-module.exports = { Room, RoomManager };
+module.exports = { Room, RoomManager, REACTION_KEYS };

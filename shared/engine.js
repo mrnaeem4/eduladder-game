@@ -24,6 +24,9 @@
   const SLIDE_HOLD_MS = 3000;
   const LAND_PROMPT_HOLD_MS = 1200;
   const STRIKE_MS = 900;
+  /* Jeda soal selama animasi serangan: durasi langkah attack + hit/flash.
+     Deadline digeser sebesar ini agar timer lanjut dari sisa waktu. */
+  const FX_PAUSE_MS = 1400;
   const START_COUNT = 5;
   const START_STEP_MS = 1000;
   const ANSWER_GRACE_MS = 400;
@@ -62,6 +65,7 @@
     changeQuestion: 1,
     doubleMove: 2,
     penawar: 1,
+    eliminateTwo: 2,
   });
 
   /* Sepuluh karakter = 10 palet warna yang dipetakan bergiliran ke empat
@@ -90,6 +94,7 @@
     { key: 'changeQuestion', cls: 'change', group: 'help', icon: 'fa-solid fa-rotate', label: 'Ganti Soal', short: 'Tukar', desc: 'Tukar soal aktif dengan soal berikutnya dari bank soal.' },
     { key: 'doubleMove', cls: 'double', group: 'help', icon: 'fa-solid fa-bolt', label: 'Double Move', short: '2x maju', desc: 'Jika jawaban benar, langkah maju menjadi dua kali lipat.' },
     { key: 'penawar', cls: 'penawar', group: 'defense', icon: 'fa-solid fa-prescription-bottle-medical', label: 'Penawar', short: 'Salah tidak mundur', desc: 'Batalkan hukuman mundur dari jawaban salah atau waktu habis pada giliran ini.' },
+    { key: 'eliminateTwo', cls: 'eliminate', group: 'help', icon: 'fa-solid fa-scissors', label: 'Sisihkan 2', short: 'Hapus 2 salah', desc: 'Tutup dua pilihan yang salah secara acak.' },
   ];
 
   const CSV_HEADER =
@@ -186,7 +191,31 @@
   function nextPlayerId(players, id) {
     if (!Array.isArray(players) || !players.length) return id;
     const index = players.findIndex((player) => player.id === id);
+    /* Pemain istirahat (terputus melewati masa tenggang) dilewati; bila
+       semua istirahat, giliran tetap pada pemain yang sama. */
+    for (let step = 1; step <= players.length; step += 1) {
+      const candidate = players[(index + step) % players.length];
+      if (!candidate.resting) return candidate.id;
+    }
     return players[(index + 1) % players.length].id;
+  }
+
+  function activePlayerIds(players) {
+    const list = (players || []).filter((player) => !player.resting);
+    return list.length ? list.map((player) => player.id) : (players || []).map((player) => player.id);
+  }
+
+  /* Sisa detik countdown dari deadline server dihitung terhadap jam klien yang
+     sudah dikoreksi offset (serverNow - Date.now()). Selalu 0..limit. */
+  function remainingSeconds(deadline, limit, offsetMs, safetyPadMs, nowMs) {
+    if (!deadline) return null;
+    const now = (typeof nowMs === 'number' ? nowMs : Date.now()) + (Number(offsetMs) || 0);
+    const pad = Number(safetyPadMs) || 0;
+    /* Pad hanya memperpanjang tampilan saat deadline masih di depan. */
+    const left = deadline - now;
+    const raw = left > 0 ? Math.ceil((left + pad) / 1000) : 0;
+    const max = Number(limit) > 0 ? Math.floor(Number(limit)) : Infinity;
+    return Math.max(0, Math.min(max, raw));
   }
 
   function normalizeBag(bag) {
@@ -487,6 +516,10 @@
       shields: {},
       penawarId: null,
       doubleId: null,
+      eliminated: [],
+      eliminatedBy: null,
+      attackFx: null,
+      deadlineSetAt: null,
       currentId: players[0].id,
       turnForId: players[0].id,
       armedTurn: null,
@@ -553,6 +586,12 @@
       questionThrown: state.questionThrown,
       questionId: state.question ? state.question.id : null,
       deadline: state.deadline,
+      deadlineSetAt: state.deadlineSetAt || null,
+      eliminated: Array.isArray(state.eliminated) ? [...state.eliminated] : [],
+      eliminatedBy: state.eliminatedBy || null,
+      attackFx: state.attackFx
+        ? { actorId: state.attackFx.actorId, targetId: state.attackFx.targetId, weapon: state.attackFx.weapon, shielded: Boolean(state.attackFx.shielded) }
+        : null,
       picked: state.picked,
       revealed: state.revealed,
       snakeLadder: state.snakeLadder
@@ -633,6 +672,7 @@
         name: playerNameOf(player),
         pos: state.positions[player.id] || 1,
         helps: sumHelps(state.helps[player.id]),
+        resting: Boolean(player.resting),
       }))
       .sort((a, b) => b.pos - a.pos || b.helps - a.helps || a.slot - b.slot);
   }
@@ -714,6 +754,7 @@
             s.snakeLadder = { type: 'ladder', playerId, from: cell, to: LADDERS[cell], question: q };
             s.phase = 'bonus';
             s.deadline = q ? Date.now() + q.duration * 1000 : null;
+            s.deadlineSetAt = q ? Date.now() : null;
             s.picked = null;
             s.revealed = false;
           },
@@ -749,6 +790,7 @@
             s.snakeLadder = { type: 'snake', playerId, from: cell, to: SNAKES[cell], question: q };
             s.phase = 'bonus';
             s.deadline = q ? Date.now() + q.duration * 1000 : null;
+            s.deadlineSetAt = q ? Date.now() : null;
             s.picked = null;
             s.revealed = false;
           },
@@ -780,6 +822,9 @@
           s.penawarId = null;
           s.doubleId = null;
           s.armedTurn = null;
+          s.eliminated = [];
+          s.eliminatedBy = null;
+          s.attackFx = null;
           if (finishingId && s.locked[finishingId]) delete s.locked[finishingId];
           s.question = null;
           s.picked = null;
@@ -824,6 +869,17 @@
     state.picked = null;
     state.revealed = false;
     state.clueRevealed = false;
+    state.eliminated = [];
+    state.eliminatedBy = null;
+    state.attackFx = null;
+    state.deadline = null;
+    state.deadlineSetAt = null;
+
+    /* Pemain yang masih istirahat saat permainan dimulai tetap dijeda sampai
+       dia kembali. */
+    const firstId = (state.players.find((player) => !player.resting) || state.players[0]).id;
+    state.currentId = firstId;
+    state.turnForId = firstId;
 
     for (let count = START_COUNT; count >= 1; count--) {
       steps.push(
@@ -848,6 +904,7 @@
           s.turnForId = s.currentId;
           s.questionThrown = false;
           s.deadline = Date.now() + first.duration * 1000;
+          s.deadlineSetAt = Date.now();
           s.picked = null;
           s.revealed = false;
         },
@@ -883,6 +940,9 @@
           s.questionThrown = mode === 'ready';
           s.picked = null;
           s.revealed = false;
+          s.eliminated = [];
+          s.eliminatedBy = null;
+          s.attackFx = null;
           /* Soal baru / soal yang dilempar: clue mulai tertutup lagi. */
           s.clueRevealed = false;
           s.phase = 'answering';
@@ -890,6 +950,7 @@
             const next = drawQuestion(s);
             s.question = next;
             s.deadline = next ? Date.now() + next.duration * 1000 : null;
+            s.deadlineSetAt = next ? Date.now() : null;
             if (!next) {
               const list = [];
               finishByQuestions(s, list);
@@ -897,6 +958,7 @@
             }
           } else if (s.question) {
             s.deadline = Date.now() + s.question.duration * 1000;
+            s.deadlineSetAt = Date.now();
           }
         },
         0,
@@ -929,6 +991,10 @@
           s.revealed = true;
           s.picked = letter;
           s.deadline = null;
+          s.deadlineSetAt = null;
+          s.attackFx = null;
+          s.eliminated = [];
+          s.eliminatedBy = null;
           s.phase = 'resolving';
         },
         FEEDBACK_DELAY,
@@ -1021,6 +1087,8 @@
   function handleUseHelp(state, playerId, key, steps) {
     if (state.phase !== 'answering' || !state.question || state.revealed) return;
     if (state.turnForId !== playerId) return;
+    /* Selama animasi serangan, soal dijeda: tidak ada bantuan. */
+    if (state.attackFx) return;
     const bag = normalizeBag(state.helps[playerId]);
     if (bag[key] <= 0) return;
 
@@ -1069,7 +1137,10 @@
             s.picked = null;
             s.revealed = false;
             s.clueRevealed = false;
+            s.eliminated = [];
+            s.eliminatedBy = null;
             s.deadline = Date.now() + next.duration * 1000;
+            s.deadlineSetAt = Date.now();
           },
           0,
           [{ type: 'questionChanged' }, { type: 'sfx', kind: 'click' }]
@@ -1117,6 +1188,37 @@
           [{ type: 'toast', tone: 'info', icon: 'fa-solid fa-prescription-bottle-medical', message: 'Penawar siap: jawaban salah tidak mengurangi langkah.' }]
         )
       );
+      return;
+    }
+
+    if (key === 'eliminateTwo') {
+      /* Butuh minimal tiga opsi terisi agar dua opsi salah bisa disisihkan. */
+      const options = (state.question.options || []).filter((option) => {
+        if (option && typeof option === 'object') return Boolean(option.text || option.imageUrl);
+        return Boolean(String(option || '').trim());
+      });
+      if (options.length < 3) return;
+      const wrong = ['A', 'B', 'C', 'D']
+        .slice(0, options.length)
+        .filter((letter) => letter !== state.question.correctAnswer);
+      if (wrong.length < 2) return;
+      const letters = [];
+      while (letters.length < 2) {
+        const pick = wrong[Math.floor(Math.random() * wrong.length)];
+        if (!letters.includes(pick)) letters.push(pick);
+      }
+      letters.sort();
+      steps.push(
+        step(
+          (s) => {
+            s.helps[playerId] = { ...bag, eliminateTwo: bag.eliminateTwo - 1 };
+            s.eliminated = letters;
+            s.eliminatedBy = playerId;
+          },
+          0,
+          [{ type: 'eliminate', playerId, letters }, { type: 'sfx', kind: 'click' }]
+        )
+      );
     }
   }
 
@@ -1124,6 +1226,8 @@
     if (state.phase !== 'answering' || state.revealed) return;
     if (state.currentId !== playerId || state.turnForId !== playerId) return;
     if (state.armedTurn === playerId) return;
+    /* Satu efek serangan pada satu waktu. */
+    if (state.attackFx) return;
     const slots = state.arms[playerId] || [];
     const slot = slots.find((item) => item.uid === uid);
     if (!slot) return;
@@ -1140,6 +1244,13 @@
         (s) => {
           s.arms[playerId] = (s.arms[playerId] || []).filter((item) => item.uid !== uid);
           s.armedTurn = playerId;
+          /* Soal dijeda selama efek: sisa waktu tetap, timer lanjut setelah
+             snapshot berikutnya membersihkan attackFx. */
+          if (s.deadline) {
+            s.deadline += FX_PAUSE_MS;
+            s.deadlineSetAt = Date.now();
+          }
+          s.attackFx = { actorId: playerId, targetId, weapon: slot.key, shielded, until: Date.now() + FX_PAUSE_MS };
         },
         STRIKE_MS,
         [
@@ -1154,6 +1265,7 @@
         step(
           (s) => {
             delete s.shields[targetId];
+            s.attackFx = null;
           },
           300,
           [{ type: 'flash', tone: 'good', text: 'DITAHAN SHIELD' }, { type: 'toast', tone: 'good', icon: 'fa-solid fa-shield-halved', message: `Shield menyerap ${weapon.label}. Serangan batal.` }]
@@ -1171,6 +1283,7 @@
           (s) => {
             s.positions[targetId] = target;
             s.locked[targetId] = true;
+            s.attackFx = null;
           },
           900,
           [
@@ -1190,6 +1303,7 @@
           (s) => {
             s.positions[playerId] = from;
             s.positions[targetId] = actorCell;
+            s.attackFx = null;
           },
           0,
           [
@@ -1208,6 +1322,7 @@
         (s) => {
           s.locked[targetId] = true;
           s.helps[targetId] = sweep.bag;
+          s.attackFx = null;
         },
         0,
         [
@@ -1221,6 +1336,7 @@
   function handleBonusAnswer(state, playerId, isCorrect, steps) {
     const info = state.snakeLadder;
     if (!info || info.playerId !== playerId) return;
+    if (state.attackFx) return;
 
     steps.push(
       step(
@@ -1303,6 +1419,7 @@
             s.snakeLadder = { type: 'ladder', playerId, from: cell, to: LADDERS[cell], question: q };
             s.phase = 'bonus';
             s.deadline = q ? Date.now() + q.duration * 1000 : null;
+            s.deadlineSetAt = q ? Date.now() : null;
             s.revealed = false;
             s.picked = null;
           },
@@ -1320,6 +1437,7 @@
             s.snakeLadder = { type: 'snake', playerId, from: cell, to: SNAKES[cell], question: q };
             s.phase = 'bonus';
             s.deadline = q ? Date.now() + q.duration * 1000 : null;
+            s.deadlineSetAt = q ? Date.now() : null;
             s.revealed = false;
             s.picked = null;
           },
@@ -1332,6 +1450,131 @@
     nextTurnSteps(state, steps, 'answer');
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Pemain keluar / bergabung di tengah permainan                       */
+  /* ------------------------------------------------------------------ */
+
+  function markResting(state, playerId, resting) {
+    const player = findPlayer(state, playerId);
+    if (player) player.resting = Boolean(resting);
+    return player;
+  }
+
+  /* Pemain berhenti bermain (terputus melewati masa tenggang). Bila dia
+     pemilik giliran/soal, soal dialihkan ke pemain aktif berikutnya tanpa
+     hukuman; aturan lain (shield, kunci) tetap berlaku untuk orang lain. */
+  function handlePlayerLeft(state, playerId, steps) {
+    const player = findPlayer(state, playerId);
+    if (!player) return;
+    const phase = state.phase;
+    const ownerOfTurn = state.turnForId === playerId || state.currentId === playerId;
+    const handoffOwner = state.handoff && state.handoff.playerId === playerId;
+
+    if (phase === 'handoff' && handoffOwner) {
+      steps.push(
+        step(
+          (s) => {
+            markResting(s, playerId, true);
+            const nextId = nextPlayerId(s.players, playerId);
+            s.handoff = { playerId: nextId, mode: 'next', reason: 'next' };
+          },
+          0,
+          [{ type: 'toast', tone: 'warn', icon: 'fa-solid fa-person-walking-arrow-right', message: `${playerNameOf(player)} keluar dari permainan. Giliran dialihkan.` }]
+        )
+      );
+      return;
+    }
+
+    if ((phase === 'answering' || phase === 'bonus') && ownerOfTurn) {
+      steps.push(
+        step(
+          (s) => {
+            markResting(s, playerId, true);
+            const nextId = nextPlayerId(s.players, playerId);
+            s.currentId = nextId;
+            s.turnForId = nextId;
+            s.questionThrown = false;
+            s.clueRevealed = false;
+            s.penawarId = null;
+            s.doubleId = null;
+            s.armedTurn = null;
+            s.eliminated = [];
+            s.eliminatedBy = null;
+            s.attackFx = null;
+            if (s.locked[playerId]) delete s.locked[playerId];
+            s.question = null;
+            s.picked = null;
+            s.revealed = false;
+            s.deadline = null;
+            s.deadlineSetAt = null;
+            s.snakeLadder = null;
+            s.phase = 'handoff';
+            s.handoff = { playerId: nextId, mode: 'next', reason: 'left' };
+          },
+          0,
+          [{ type: 'toast', tone: 'warn', icon: 'fa-solid fa-person-walking-arrow-right', message: `${playerNameOf(player)} keluar dari permainan. Soal dialihkan.` }]
+        )
+      );
+      return;
+    }
+
+    steps.push(
+      step(
+        (s) => {
+          markResting(s, playerId, true);
+        },
+        0,
+        [{ type: 'toast', tone: 'warn', icon: 'fa-solid fa-bed', message: `${playerNameOf(player)} istirahat; gilirannya dilewati.` }]
+      )
+    );
+  }
+
+  /* Pemain yang kembali dari istirahat. */
+  function handlePlayerBack(state, playerId, steps) {
+    const player = findPlayer(state, playerId);
+    if (!player) return;
+    if (!player.resting) return;
+    steps.push(
+      step(
+        (s) => {
+          markResting(s, playerId, false);
+        },
+        0,
+        [{ type: 'toast', tone: 'good', icon: 'fa-solid fa-user-check', message: `${playerNameOf(player)} kembali bermain.` }]
+      )
+    );
+  }
+
+  /* Pemain baru yang bergabung saat permainan berjalan: mulai dari kotak 1,
+     bantuan sesuai preset, baki senjata kosong. Giliran mengikuti posisinya
+     di array pemain (slot terakhir) pada putaran berikutnya. */
+  function addLatePlayer(state, player, steps) {
+    if (!player || !player.id) return;
+    if (findPlayer(state, player.id)) return;
+    const entry = {
+      id: player.id,
+      slot: player.slot,
+      char: player.char || 1,
+      name: playerNameOf(player),
+      resting: false,
+    };
+    steps.push(
+      step(
+        (s) => {
+          const list = s.players.filter((item) => item.id !== entry.id);
+          list.push({ ...entry });
+          list.sort((a, b) => a.slot - b.slot);
+          s.players = list;
+          s.positions[entry.id] = 1;
+          s.helps[entry.id] = { ...sanitizeHelpQuotas(s.helpPreset, DEFAULT_HELPS()) };
+          s.arms[entry.id] = [];
+        },
+        0,
+        [{ type: 'toast', tone: 'info', icon: 'fa-solid fa-user-plus', message: `${entry.name} bergabung di tengah permainan.` }]
+      )
+    );
+  }
+
   return {
     MIN_QUESTIONS,
     WIN_POSITION,
@@ -1342,6 +1585,7 @@
     RESOLVE_DELAY,
     FEEDBACK_DELAY,
     HOP_DELAY,
+    FX_PAUSE_MS,
     LADDER_SLIDE_MS,
     SNAKE_SLIDE_MS,
     SLIDE_HOLD_MS,
@@ -1377,6 +1621,8 @@
     playerNameOf,
     playerMap,
     nextPlayerId,
+    activePlayerIds,
+    remainingSeconds,
     normalizeBag,
     sanitizeHelpQuotas,
     isValidImageUrl,
@@ -1403,5 +1649,8 @@
     handleUseHelp,
     handleFireWeapon,
     handleBonusAnswer,
+    handlePlayerLeft,
+    handlePlayerBack,
+    addLatePlayer,
   };
 });

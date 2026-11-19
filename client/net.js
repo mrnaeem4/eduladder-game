@@ -34,6 +34,47 @@ window.Net = (function () {
       .catch(() => PUBLIC_BASE);
   }
 
+  /* Selisih jam server dan klien (serverNow - Date.now()). Deadline dibuat
+     dengan jam server, jadi countdown harus menghitung terhadap jam yang sama.
+     Disimpan sebagai median beberapa sampel terakhir agar lonjakan latensi
+     tidak membuat angka melompat. */
+  const MAX_OFFSET_SAMPLES = 5;
+  const MAX_PLAUSIBLE_OFFSET = 5 * 60 * 1000;
+  let clockOffset = 0;
+  let offsetSamples = [];
+
+  function resetOffset() {
+    clockOffset = 0;
+    offsetSamples = [];
+  }
+
+  /* Murni: hitung offset dari satu pasangan jam server + jam klien. */
+  function computeOffset(serverNow, clientNow) {
+    const server = Number(serverNow);
+    const client = Number(clientNow);
+    if (!Number.isFinite(server) || !Number.isFinite(client)) return null;
+    return server - client;
+  }
+
+  function trackServerNow(serverNow) {
+    const offset = computeOffset(serverNow, Date.now());
+    if (offset === null) return clockOffset;
+    /* Jam perangkat meleset ekstrem: abaikan dan andalkan sisa relatif. */
+    if (Math.abs(offset) > MAX_PLAUSIBLE_OFFSET) {
+      resetOffset();
+      return clockOffset;
+    }
+    offsetSamples.push(offset);
+    if (offsetSamples.length > MAX_OFFSET_SAMPLES) offsetSamples.shift();
+    const sorted = offsetSamples.slice().sort((a, b) => a - b);
+    clockOffset = sorted[Math.floor(sorted.length / 2)];
+    return clockOffset;
+  }
+
+  function getClockOffset() {
+    return clockOffset;
+  }
+
   function connect() {
     if (!socket) return null;
     if (!socket.connected) socket.connect();
@@ -224,6 +265,10 @@ window.Net = (function () {
     request,
     downloadFile,
     loadServerConfig,
+    computeOffset,
+    trackServerNow,
+    getClockOffset,
+    resetClockOffset: resetOffset,
     savePlayerToken,
     loadPlayerToken,
     saveAdminSession,

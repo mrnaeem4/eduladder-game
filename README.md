@@ -32,6 +32,7 @@ Salin `.env.example` lalu sesuaikan. Nilai tidak valid membuat server berhenti s
 | `EDULADDER_PUBLIC_URL` | *(kosong)* | URL publik untuk QR/link join, mis. `http://192.168.1.10:3000`. Kosong = ikuti alamat browser. |
 | `EDULADDER_JSON_LIMIT` | `2mb` | Batas body JSON (simpan bank soal). |
 | `EDULADDER_CSV_LIMIT` | `1mb` | Batas unggah CSV bank soal. |
+| `EDULADDER_DISCONNECT_GRACE_SECONDS` | `10` | Masa tenggang (detik) pemain yang terputus saat bermain; `0` = langsung istirahat. |
 
 `.env` tidak di-commit; hanya `.env.example` yang ikut repositori. Endpoint publik `GET /api/config` mengirim hanya `publicUrl` (tanpa rahasia) agar klien memakai host yang benar di balik reverse proxy/LAN.
 
@@ -49,7 +50,7 @@ Pemain membuka alamat **Jaringan** (atau memindai QR di layar lobi), memasukkan 
 
 1. **Admin** membuka panel admin, login dengan password, lalu mengelola bank soal.
 2. **Bank soal** bisa dibuat lewat editor GUI (tambah/edit/hapus/urutkan soal) atau diimpor massal dari CSV. Setiap soal dan setiap pilihan boleh punya URL gambar.
-3. Admin membuat **room** dari sebuah bank soal, mengatur **kuota bantuan** per pemain dan **maksimal pemain** (2–25, default 4), lalu membagikan kode room/QR. Batas pemain hanya bisa diset saat room dibuat.
+3. Admin membuat **room** dari sebuah bank soal, mengatur **kuota bantuan** per pemain, **maksimal pemain** (2–25, default 4), dan opsi **izinkan join saat berjalan**, lalu membagikan kode room/QR. Batas pemain dan opsi join hanya bisa diset saat room dibuat.
 4. Pemain bergabung dengan kode room + nama, lalu memilih satu dari **10 karakter** di lobi (boleh sama antar pemain; bisa diganti sampai admin menekan Mulai).
 5. Setelah minimal 2 pemain bergabung dan bank soal mencukupi, admin menekan **Mulai Permainan**.
 6. Hanya pemilik soal aktif (dan layar admin/IFP) yang melihat overlay soal; pemain lain tetap melihat papan dan pil pojok **Giliran <nama>**.
@@ -76,7 +77,34 @@ Pertanyaan;Pilihan A;Pilihan B;Pilihan C;Pilihan D;Jawaban Benar;Clue;Reward;Pen
 
 ## Kuota bantuan
 
-Enam bantuan punya kuota angka **per room, per pemain**: Lempar Soal, Clue, Shield, Ganti Soal, Double Move, Penawar. Nilai `0` menonaktifkan bantuan tersebut. Default: `2, 1, 1, 1, 2, 1`. Kuota diatur saat membuat room atau di lobi sebelum permainan dimulai; setelah berjalan tidak bisa diubah.
+Tujuh bantuan punya kuota angka **per room, per pemain**: Lempar Soal, Clue, Shield, Ganti Soal, Double Move, Penawar, dan **Sisihkan 2**. Nilai `0` menonaktifkan bantuan tersebut. Default: `2, 1, 1, 1, 2, 1, 2`. Kuota diatur saat membuat room atau di lobi sebelum permainan dimulai; setelah berjalan tidak bisa diubah.
+
+**Sisihkan 2** menutup dua pilihan salah secara acak pada soal yang sedang aktif. Opsi yang disisihkan tidak bisa dipilih dan bertanda "disisihkan"; efeknya direset saat soal berikutnya.
+
+## Putus koneksi & join di tengah permainan
+
+- Pemain yang koneksinya putus saat permainan berjalan mendapat **masa tenggang** (default 10 detik, `EDULADDER_DISCONNECT_GRACE_SECONDS`). Selama itu dia bisa reconnect (token di localStorage) tanpa kehilangan giliran.
+- Sesudah masa tenggang pemain berstatus **istirahat**: rotasi giliran melewatinya. Bila soal sedang dipegangnya, soal dialihkan ke pemain aktif berikutnya **tanpa hukuman** dan timer mulai penuh setelah pemain itu menekan "Lanjutkan".
+- Pemain istirahat yang kembali bermain otomatis aktif lagi, ikut di giliran berikutnya (bukan memaksa soalnya kembali).
+- **Join di tengah permainan**: room punya opsi "Izinkan join saat permainan berjalan" (default aktif, hanya diset saat room dibuat). Bila aktif, pemain baru masuk sebagai pemain mulai kotak 1 dan mendapat giliran setelah pemain terakhir pada putaran berikutnya; bila nonaktif atau room penuh, tamu menjadi penonton.
+
+## Panel aksi & efek senjata
+
+- Semua bantuan dan dua slot senjata tampil dalam **satu panel "Aksi"** tanpa tab; masing-masing menampilkan ikon, label, dan sisa kuota.
+- Saat senjata dilepas, soal **dijeda**: overlay soal disembunyikan sementara, pengumuman serangan tampil di tengah layar, deadline digeser sebesar durasi efek (`FX_PAUSE_MS`) sehingga timer lanjut dari sisa waktu. Jawaban/bantuan ditolak server selama efek berlangsung.
+
+## Countdown
+
+- Batas waktu soal berasal dari jam **server**. Klien menghitung selisih jam (median 5 sampel `serverNow`) sehingga jam perangkat yang meleset tidak membuat countdown ratusan detik.
+- Angka selalu di-clamp ke `0..durasi soal`; bila selisih jam ekstrem (> 5 menit) offset diabaikan.
+
+## Reaksi lobi
+
+Pemain bisa mengirim reaksi (👍 👏 🎉 😮 🔥 ❤️) di lobi. Reaksi tampil sebagai callout di kartu karakter pengirim selama ~3 detik. Throttle server 1 reaksi / 2 detik / pemain, TTL 4 detik, dan tidak disimpan ke database.
+
+## Podium
+
+Saat permainan selesai, layar penuh **podium 3D** (hutan, podium emas/perak/perunggu) menggantikan papan: kamera menyapu hutan, juara 3→2→1 "jatuh" ke podium, lalu pemain lain muncul berjajar. Tombol **Lihat papan** mengembalikan papan, **Lihat hasil** membuka modal peringkat. Bila WebGL tidak tersedia, podium 2D sederhana ditampilkan. Podium memakai model karakter yang sama dengan papan (`assets/js/podium3d.js`).
 
 ## Room persistent & riwayat
 
@@ -122,6 +150,7 @@ client/
   net.js                # Socket.IO + REST + localStorage
   audio.js              # BGM & efek suara
 assets/js/board3d.js    # papan 3D (Three.js)
+assets/js/podium3d.js   # podium pemenang 3D (Three.js)
 test/                   # node:test: engine + persistensi/pemulihan
 ```
 

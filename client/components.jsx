@@ -304,14 +304,16 @@
   /* Answers & helps                                                     */
   /* ------------------------------------------------------------------ */
 
-  function OverlayAnswerGrid({ options, correctLetter, picked, showAnswer, onAnswer, disabled }) {
+  function OverlayAnswerGrid({ options, correctLetter, picked, showAnswer, onAnswer, disabled, eliminated }) {
+    const struck = Array.isArray(eliminated) ? eliminated : [];
     return (
       <div className="overlay-answers" role="group" aria-label="Pilihan jawaban">
         {(options || []).map((option, index) => {
           const letter = String.fromCharCode(65 + index);
           const isCorrect = correctLetter ? letter === correctLetter : false;
           const isPicked = picked === letter;
-          let stateClass = '';
+          const isStruck = struck.includes(letter);
+          let stateClass = isStruck && !showAnswer ? 'eliminated' : '';
           let verdictIcon = null;
           if (showAnswer) {
             if (isPicked && isCorrect) {
@@ -333,14 +335,15 @@
               type="button"
               className={`answer overlay-answer ${stateClass}`}
               onClick={() => onAnswer && onAnswer(letter)}
-              disabled={disabled || showAnswer}
-              aria-label={`Pilihan ${letter}: ${optionText(option)}`}
+              disabled={disabled || showAnswer || isStruck}
+              aria-label={`Pilihan ${letter}: ${optionText(option)}${isStruck ? ' (disisihkan)' : ''}`}
             >
               <span className="letter">{letter}</span>
               <span className="answer-text">
                 {optionText(option)}
                 <Img src={optionImage(option)} alt={`Gambar pilihan ${letter}`} className="option-image" />
               </span>
+              {isStruck && !showAnswer && <span className="eliminated-tag">disisihkan</span>}
               {verdictIcon}
             </button>
           );
@@ -349,62 +352,78 @@
     );
   }
 
-  const HELP_TABS = [
-    { key: 'help', label: 'Bantuan', icon: 'fa-solid fa-wand-magic-sparkles' },
-    { key: 'defense', label: 'Pertahanan', icon: 'fa-solid fa-shield-halved' },
-  ];
-
-  function HelpsRow({ helps, onUseHelp, helpBlocked, helpActive, helpDescription, tab, onTabChange, locked }) {
+  /* Satu panel "Aksi": semua bantuan + slot senjata dalam satu grid, tanpa
+     tab, sehingga pemain melihat seluruh pilihan sekaligus. */
+  function ActionPanel({
+    helps,
+    onUseHelp,
+    helpBlocked,
+    helpActive,
+    locked,
+    armSlots,
+    showArms,
+    canUseArms,
+    armsFired,
+    onPickArm,
+  }) {
     const bag = normalizeBag(helps);
-    const groupHelps = HELPS.filter((help) => help.group === tab);
-    const groupCount = (groupKey) => HELPS.filter((help) => help.group === groupKey).reduce((sum, help) => sum + (bag[help.key] || 0), 0);
-
+    const weaponItems = [0, 1].map((index) => armSlots[index] || null);
+    const hint = locked
+      ? 'Soal ini dilempar ke pemain berikutnya. Hanya penerima yang menjawab.'
+      : showArms
+        ? 'Bantuan & serangan bisa dipakai sebelum menjawab.'
+        : 'Soal ini dilempar: serangan hanya bisa dilepas pada giliran sendiri.';
     return (
-      <div className={`overlay-helps ${locked ? 'locked' : ''}`}>
-        <div className="overlay-helps-head">
+      <div className={`action-panel ${locked ? 'locked' : ''}`}>
+        <div className="action-head">
           <h3>
-            <i className="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Bantuan
+            <i className="fa-solid fa-toolbox" aria-hidden="true"></i> Aksi
           </h3>
           <span className={`pill ${locked ? 'warn' : 'neutral'}`}>
             <i className={`fa-solid ${locked ? 'fa-lock' : 'fa-layer-group'}`} aria-hidden="true"></i>
-            {locked ? 'Terkunci' : `${sumHelps(bag)} tersisa`}
+            {locked ? 'Terkunci' : `${sumHelps(bag)} bantuan tersisa`}
           </span>
         </div>
-        <div className="helps-tabs" role="tablist" aria-label="Jenis bantuan">
-          {HELP_TABS.map((item) => (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={tab === item.key}
-              className={`help-tab ${tab === item.key ? 'active' : ''}`}
-              onClick={() => onTabChange(item.key)}
-            >
-              <i className={item.icon} aria-hidden="true"></i>
-              {item.label}
-              <span className="help-tab-count">{groupCount(item.key)}</span>
-            </button>
-          ))}
-        </div>
-        <div className={`helps-grid overlay-helps-grid ${tab === 'defense' ? 'defense' : ''}`} role="tabpanel">
-          {groupHelps.map((help) => (
+        <div className="action-grid">
+          {HELPS.map((help) => (
             <button
               key={help.key}
               type="button"
-              className={`help-btn ${help.cls} ${helpActive(help.key) ? 'active' : ''}`}
+              className={`action-btn ${help.cls} ${helpActive(help.key) ? 'active' : ''}`}
               onClick={() => onUseHelp(help.key)}
               disabled={locked || helpBlocked(help.key)}
               aria-label={`${help.label}: ${help.short}. Sisa ${bag[help.key]}.`}
               aria-pressed={helpActive(help.key)}
               title={locked ? 'Soal ini dilempar ke pemain lain; bantuan dikunci.' : help.desc}
             >
-              <span className={`help-count ${bag[help.key] === 0 ? 'zero' : ''}`}>{bag[help.key]}</span>
+              <span className={`action-count ${bag[help.key] === 0 ? 'zero' : ''}`}>{bag[help.key]}</span>
               <i className={help.icon} aria-hidden="true"></i>
-              {help.label}
+              <span className="action-label">{help.label}</span>
             </button>
           ))}
+          {weaponItems.map((slot, index) => {
+            const weapon = slot ? weaponOf(slot.key) : null;
+            const usable = Boolean(slot) && showArms && canUseArms && !armsFired;
+            const stateClass = armsFired && slot ? 'spent' : usable ? 'usable' : '';
+            return (
+              <button
+                key={slot ? slot.uid : `empty-${index}`}
+                type="button"
+                className={`action-btn weapon ${weapon ? 'filled' : 'empty'} ${stateClass}`}
+                style={weapon ? { '--arm-tone': weapon.tone, '--arm-soft': weapon.soft, '--arm-line': weapon.line } : undefined}
+                onClick={() => (usable ? onPickArm(slot) : null)}
+                disabled={!usable}
+                aria-label={weapon ? `${weapon.label}${usable ? ', tekan untuk memilih lawan' : ''}` : `Slot senjata ${index + 1} kosong`}
+                title={weapon ? (usable ? `${weapon.label}${armsFired ? ': sudah dilepas giliran ini' : ', tekan untuk memilih lawan'}` : `${weapon.label}: serangan hanya pada giliran sendiri`) : 'Mendarat di kotak senjata untuk mengisi slot'}
+              >
+                <span className={`action-count ${weapon ? '' : 'zero'}`}>{weapon ? (armsFired ? '×' : '1') : 0}</span>
+                <i className={weapon ? weapon.icon : 'fa-regular fa-square'} aria-hidden="true"></i>
+                <span className="action-label">{weapon ? weapon.label : `Senjata ${index + 1}`}</span>
+              </button>
+            );
+          })}
         </div>
-        <p className="help-desc">{locked ? 'Soal ini dilempar ke pemain berikutnya. Hanya penerima yang menjawab.' : helpDescription}</p>
+        <p className="help-desc">{hint}</p>
       </div>
     );
   }
@@ -558,9 +577,6 @@
     onUseHelp,
     helpBlocked,
     helpActive,
-    helpDescription,
-    helpsTab,
-    onHelpsTabChange,
     armSlots,
     showArms,
     canUseArms,
@@ -570,6 +586,7 @@
     bankLeft,
     helpsLocked,
     canAnswer,
+    eliminated,
   }) {
     if (!question) return null;
     return (
@@ -598,17 +615,19 @@
               </div>
             )}
 
-            <OverlayAnswerGrid options={question.options} correctLetter={correctLetter} picked={picked} showAnswer={showAnswer} onAnswer={onAnswer} disabled={!canAnswer} />
+            <OverlayAnswerGrid options={question.options} correctLetter={correctLetter} picked={picked} showAnswer={showAnswer} onAnswer={onAnswer} disabled={!canAnswer} eliminated={eliminated} />
 
-            <HelpsRow
+            <ActionPanel
               helps={helps}
               onUseHelp={onUseHelp}
               helpBlocked={helpBlocked}
               helpActive={helpActive}
-              helpDescription={helpDescription}
-              tab={helpsTab}
-              onTabChange={onHelpsTabChange}
               locked={helpsLocked || !canAnswer}
+              armSlots={armSlots}
+              showArms={showArms}
+              canUseArms={canUseArms}
+              armsFired={armsFired}
+              onPickArm={onPickArm}
             />
 
             <div className="overlay-foot">
@@ -670,7 +689,7 @@
     );
   }
 
-  function BonusOverlay({ info, question, seconds, picked, correctLetter, revealed, players, onAnswer, bankLeft, canAnswer }) {
+  function BonusOverlay({ info, question, seconds, limit, picked, correctLetter, revealed, players, onAnswer, bankLeft, canAnswer }) {
     if (!info) return null;
     const player = players.find((item) => item.id === info.playerId) || players[0];
     const isLadder = info.type === 'ladder';
@@ -705,7 +724,7 @@
                 {playerNameOf(player)}
               </span>
               <span className="grow"></span>
-              <Countdown seconds={seconds} limit={question.duration} theme={themeVars(player)} />
+              <Countdown seconds={seconds} limit={limit || question.duration} theme={themeVars(player)} />
             </div>
 
             <h2 className="overlay-question">{question.question}</h2>
@@ -756,8 +775,7 @@
     return { left: ((visualCol + 0.5) / BOARD_SIZE) * 100, top: ((rowFromTop + 0.5) / BOARD_SIZE) * 100 };
   }
 
-  function ScoreFloats({ mode, floats, boardRef, positions }) {
-    if (!floats || !floats.length) return null;
+  function ScoreFloats({ mode, floats, boardRef, positions }) {    if (!floats || !floats.length) return null;
     return (
       <div className={`score-floats ${mode === '2d' ? 'd2' : 'd3'}`} aria-hidden="true">
         {floats.map((item) => {
@@ -790,17 +808,131 @@
     const size = 100;
     const radius = 44;
     const circumference = 2 * Math.PI * radius;
-    const ratio = limit > 0 ? Math.max(0, Math.min(1, seconds / limit)) : 0;
-    const stateClass = seconds <= 3 ? 'critical' : seconds <= 5 ? 'warn' : '';
+    const ratio = limit > 0 ? Math.max(0, Math.min(1, (Number(seconds) || 0) / limit)) : 0;
+    const shown = Math.max(0, Math.floor(Number(seconds) || 0));
+    const stateClass = shown <= 3 ? 'critical' : shown <= 5 ? 'warn' : '';
     return (
-      <div className={`countdown ${stateClass}`} style={theme} role="timer" aria-label={`Sisa waktu ${seconds} detik`}>
+      <div className={`countdown ${stateClass}`} style={theme} role="timer" aria-label={`Sisa waktu ${shown} detik`}>
         <svg viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
           <circle className="track" cx={size / 2} cy={size / 2} r={radius} />
           <circle className="progress" cx={size / 2} cy={size / 2} r={radius} strokeDasharray={circumference} strokeDashoffset={circumference * (1 - ratio)} />
         </svg>
         <div className="countdown-label">
-          <strong>{seconds}</strong>
+          <strong>{shown}</strong>
           <span>DETIK</span>
+        </div>
+      </div>
+    );
+  }
+
+  /* Panggung podium 3D: memakai builder model dari board3d.js. Bila WebGL
+     tidak tersedia, tampilkan podium 2D sederhana tetap dengan peringkat. */
+  function PodiumStage({ ranking, players, characterStyles, onClose, onShowResults }) {
+    const mountRef = useRef(null);
+    const stageRef = useRef(null);
+    const [failed, setFailed] = useState(false);
+    const [done, setDone] = useState(false);
+    const reduceMotion = useMemo(() => {
+      try {
+        return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      } catch (error) {
+        return false;
+      }
+    }, []);
+
+    const rankingKey = (ranking || []).map((entry) => `${entry.id}:${entry.slot}:${entry.pos}`).join('|');
+    const entries = useMemo(() => (ranking || []).map((entry) => {
+      const player = (players || []).find((item) => item.id === entry.id) || {};
+      const character = window.GameEngine.characterStyle(player.char || entry.slot);
+      return { ...entry, char: player.char || entry.slot, character };
+    }), [rankingKey]);
+
+    useEffect(() => {
+      const mount = mountRef.current;
+      if (!mount) return undefined;
+      if (!window.Podium3D) {
+        setFailed(true);
+        return undefined;
+      }
+      if (!window.THREE) {
+        setFailed(true);
+        return undefined;
+      }
+      if (window.Board3D && typeof window.Board3D.supported === 'function' && !window.Board3D.supported().ok) {
+        setFailed(true);
+        return undefined;
+      }
+      let stage = null;
+      try {
+        stage = new window.Podium3D(mount, {
+          entries,
+          characterStyles: characterStyles || window.GameEngine.CHARACTERS,
+          reducedMotion: reduceMotion,
+          onStage: (phase) => {
+            if (phase === 'done') setDone(true);
+          },
+        });
+        stageRef.current = stage;
+        stage.play();
+      } catch (error) {
+        console.warn('Podium 3D tidak tersedia:', error);
+        setFailed(true);
+        if (stage) stage.dispose();
+      }
+      return () => {
+        if (stage) stage.dispose();
+        if (stageRef.current === stage) stageRef.current = null;
+      };
+    }, [rankingKey]);
+
+    const champion = entries[0];
+    const skip = () => {
+      const stage = stageRef.current;
+      if (stage && stage.skip) stage.skip();
+      setDone(true);
+    };
+
+    return (
+      <div className="podium-stage" role="dialog" aria-modal="true" aria-label="Podium pemenang">
+        <div className="podium-canvas" ref={mountRef} aria-hidden="true"></div>
+        {failed && (
+          <div className="podium-fallback">
+            <p className="podium-fallback-note">
+              <i className="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Podium 3D tidak tersedia di perangkat ini.
+            </p>
+            <div className="podium-fallback-podium">
+              {[1, 0, 2].map((index) => {
+                const entry = entries[index];
+                if (!entry) return <div key={`gap-${index}`} className="podium-fallback-slot empty"></div>;
+                return (
+                  <div key={entry.id} className={`podium-fallback-slot place-${index + 1}`} style={themeVars({ slot: entry.slot })}>
+                    <span className="podium-fallback-avatar" aria-hidden="true">{entry.character.emoji}</span>
+                    <strong>{entry.name}</strong>
+                    <small>{index + 1}</small>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <div className="podium-overlay">
+          <div className="podium-title">
+            <span className="podium-kicker"><i className="fa-solid fa-trophy" aria-hidden="true"></i> Podium</span>
+            <h2>{champion ? `Juara: ${champion.name}` : 'Permainan Selesai'}</h2>
+          </div>
+          <div className="podium-actions">
+            {!done && !failed && (
+              <button type="button" className="btn btn-ghost" onClick={skip}>
+                <i className="fa-solid fa-forward" aria-hidden="true"></i> Lewati animasi
+              </button>
+            )}
+            <button type="button" className="btn btn-ghost" onClick={onShowResults}>
+              <i className="fa-solid fa-list-ol" aria-hidden="true"></i> Lihat hasil
+            </button>
+            <button type="button" className="btn btn-primary" onClick={onClose}>
+              <i className="fa-solid fa-table-cells-large" aria-hidden="true"></i> Lihat papan
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -886,7 +1018,7 @@
     Board,
     Scene3D,
     OverlayAnswerGrid,
-    HelpsRow,
+    ActionPanel,
     ArmBay,
     ArmTargetModal,
     StartCountdown,
@@ -895,10 +1027,10 @@
     BonusOverlay,
     ScoreFloats,
     Countdown,
+    PodiumStage,
     Confetti,
     downloadTemplate,
     detectWebGL,
-    HELP_TABS,
     BOARD_CELLS,
   };
 })();

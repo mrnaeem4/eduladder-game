@@ -26,7 +26,14 @@ window.UI = Object.assign({}, window.UI || {});
     return `${pad(Math.floor(seconds / 60))}:${pad(seconds % 60)}`;
   }
 
-  function useCountdown(deadline) {
+  /* Kompensasi jaringan saat menghitung tampilan: angka dibulatkan ke atas
+     sehingga pad ini mencegah soal "berakhir" satu detik terlalu cepat. */
+  const COUNTDOWN_SAFETY_PAD_MS = 250;
+
+  /* Sisa detik countdown terhadap deadline server. `limit` (durasi soal)
+     menjaga angka tidak pernah melebihi durasi walau jam perangkat meleset;
+     offset jam server diambil dari client/net.js. */
+  function useCountdown(deadline, limit) {
     const [now, setNow] = React.useState(() => Date.now());
     React.useEffect(() => {
       if (!deadline) return undefined;
@@ -34,7 +41,8 @@ window.UI = Object.assign({}, window.UI || {});
       return () => clearInterval(id);
     }, [deadline]);
     if (!deadline) return null;
-    return Math.max(0, Math.ceil((deadline - now) / 1000));
+    const offset = window.Net && window.Net.getClockOffset ? window.Net.getClockOffset() : 0;
+    return GE.remainingSeconds(deadline, limit, offset, COUNTDOWN_SAFETY_PAD_MS, now);
   }
 
   window.UI = Object.assign({}, window.UI || {}, { downloadTemplate: downloadTemplate, formatTime: formatTime, useCountdown: useCountdown });

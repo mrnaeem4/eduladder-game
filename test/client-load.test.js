@@ -43,6 +43,8 @@ function makeBrowserContext() {
 
 /* Urutan mengikuti index.html. */
 const SCRIPTS = [
+  'assets/js/board3d.js',
+  'assets/js/podium3d.js',
   'client/net.js',
   'client/audio.js',
   'client/dialog.js',
@@ -61,6 +63,8 @@ function evalScript(context, name) {
   const code = name.endsWith('.jsx')
     ? babel.transform(source, { presets: ['react'], sourceType: 'script' }).code
     : source;
+  /* Berkas JS murni (board3d/podium3d) hanya mendaftarkan global dan tidak
+     menyentuh DOM saat dimuat; Three.js tidak diperlukan untuk itu. */
   new vm.Script(code, { filename: name }).runInContext(context);
 }
 
@@ -80,10 +84,10 @@ test('semua skrip klien dapat dimuat di satu scope global (tanpa redeclaration)'
 test('global lintas berkas tersedia setelah semua skrip dimuat', () => {
   const context = makeBrowserContext();
   SCRIPTS.forEach((name) => evalScript(context, name));
-  ['UI', 'Screens', 'AdminDashboard', 'LobbyScreen', 'GameScreen', 'Net', 'AudioKit'].forEach((key) => {
+  ['UI', 'Screens', 'AdminDashboard', 'LobbyScreen', 'GameScreen', 'Net', 'AudioKit', 'Board3D', 'Podium3D'].forEach((key) => {
     assert.ok(context[key], `window.${key} harus terdefinisi`);
   });
-  ['Modal', 'Toasts', 'MainQuestionOverlay', 'BonusOverlay', 'downloadTemplate', 'useCountdown'].forEach((key) => {
+  ['Modal', 'Toasts', 'MainQuestionOverlay', 'BonusOverlay', 'downloadTemplate', 'useCountdown', 'ActionPanel', 'PodiumStage', 'OverlayAnswerGrid'].forEach((key) => {
     assert.ok(context.UI[key], `window.UI.${key} harus terdefinisi`);
   });
 });
@@ -92,7 +96,7 @@ test('tidak ada binding top-level yang bocor ke window', () => {
   const context = makeBrowserContext();
   SCRIPTS.forEach((name) => evalScript(context, name));
   /* Net & AudioKit memang global publik dari client/net.js & audio.js. */
-  ['useState', 'useRef', 'GE', 'HELP_TABS', 'SCRIPTS'].forEach((key) => {
+  ['useState', 'useRef', 'GE', 'HELP_TABS', 'SCRIPTS', 'PODIUM_HEIGHTS', 'MODEL_BUILDERS', 'REACTIONS', 'ActionPanel', 'PodiumStage'].forEach((key) => {
     assert.strictEqual(context[key], undefined, `${key} tidak boleh menjadi global`);
   });
 });

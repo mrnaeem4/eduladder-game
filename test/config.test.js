@@ -123,3 +123,13 @@ test('helper parsing murni bekerja sesuai kontrak', () => {
   assert.strictEqual(parseByteLimit('2mb', '1mb').limit, '2mb');
   assert.strictEqual(normalizePublicUrl('').value, '');
 });
+
+test('masa tenggang pemain terputus: default 10 dan validasi 0-600', () => {
+  assert.strictEqual(load().config.disconnectGraceSeconds, 10);
+  assert.strictEqual(load({ EDULADDER_DISCONNECT_GRACE_SECONDS: '0' }).config.disconnectGraceSeconds, 0);
+  assert.strictEqual(load({ EDULADDER_DISCONNECT_GRACE_SECONDS: '25' }).config.disconnectGraceSeconds, 25);
+  for (const value of ['-1', '601', 'abc', '2.5']) {
+    const { errors } = load({ EDULADDER_DISCONNECT_GRACE_SECONDS: value });
+    assert.ok(errors.some((m) => /EDULADDER_DISCONNECT_GRACE_SECONDS/.test(m)), `${value} harus ditolak`);
+  }
+});

@@ -2,7 +2,17 @@
    dibungkus IIFE agar binding top-level tidak bentrok antar berkas. */
 (function () {
   'use strict';
-  function LobbyScreen({ snapshot, emit, onLeave }) {
+  /* Reaksi statis tanpa aset: emoji + label. Kunci harus sama dengan server. */
+  const REACTIONS = [
+    { key: 'thumbs', emoji: '👍', label: 'Mantap' },
+    { key: 'clap', emoji: '👏', label: 'Tepuk' },
+    { key: 'party', emoji: '🎉', label: 'Hore' },
+    { key: 'wow', emoji: '😮', label: 'Wow' },
+    { key: 'fire', emoji: '🔥', label: 'Semangat' },
+    { key: 'heart', emoji: '❤️', label: 'Suka' },
+  ];
+
+  function LobbyScreen({ snapshot, emit, onLeave, reactions }) {
     const QrCode = window.Screens.QrCode;
     const T = window.Screens.T;
     const GE = window.GameEngine;
@@ -17,6 +27,8 @@
     const canStart = players.length >= minPlayers && snapshot.bankCount >= neededQuestions;
     const joinUrl = window.Net.joinUrl(snapshot.code);
     const characterOf = (player) => GE.characterStyle(player.char || player.slot);
+    const callouts = Array.isArray(reactions) ? reactions : [];
+    const reactionOf = (key) => REACTIONS.find((item) => item.key === key) || REACTIONS[0];
 
     return (
       <div className="min-h-screen w-full bg-sky-50 text-slate-900">
@@ -36,6 +48,25 @@
               {players.length}/{maxPlayers} pemain
             </span>
           </header>
+
+          {me && (
+            <div role="group" aria-label="Kirim reaksi" className="flex flex-wrap items-center gap-2 rounded-2xl border-2 border-indigo-100 bg-white px-4 py-3">
+              <span className="text-xs font-black uppercase tracking-widest text-indigo-500">Reaksi</span>
+              {REACTIONS.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  title={item.label}
+                  aria-label={`Kirim reaksi ${item.label}`}
+                  onClick={() => emit('lobby:react', { key: item.key })}
+                  className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-slate-200 bg-slate-50 text-2xl transition hover:scale-110 hover:border-indigo-300 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+                >
+                  <span aria-hidden="true">{item.emoji}</span>
+                </button>
+              ))}
+              <span className="ml-auto text-xs font-semibold text-slate-400">Maksimal satu reaksi tiap 2 detik.</span>
+            </div>
+          )}
 
           <div className="grid gap-6 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] lg:items-start">
             <section className="flex flex-col gap-5 rounded-3xl border-4 border-indigo-200 bg-white p-6">
@@ -118,11 +149,23 @@
                     {players.map((player) => {
                       const character = characterOf(player);
                       const mine = player.id === myId;
+                      const mineCalls = callouts.filter((item) => item.playerId === player.id);
+                      const resting = player.status === 'resting';
+                      const dim = resting || !player.connected;
                       return (
                         <div
                           key={player.id}
-                          className={`flex items-center gap-3 rounded-2xl border-2 bg-white px-4 py-3 ${mine ? 'border-indigo-400 bg-indigo-50/60' : 'border-slate-200'}`}
+                          className={`relative flex items-center gap-3 rounded-2xl border-2 bg-white px-4 py-3 ${mine ? 'border-indigo-400 bg-indigo-50/60' : 'border-slate-200'} ${dim ? 'opacity-70' : ''}`}
                         >
+                          {mineCalls.length > 0 && (
+                            <div className="pointer-events-none absolute inset-0 overflow-visible" aria-hidden="true">
+                              {mineCalls.map((item, index) => (
+                                <span key={item.id} className="reaction-callout" style={{ left: `${18 + index * 16}%` }}>
+                                  {reactionOf(item.key).emoji}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                           <span
                             className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full text-2xl"
                             style={{ background: character.soft, boxShadow: `inset 0 0 0 3px ${character.color}` }}
@@ -137,11 +180,13 @@
                             </p>
                             <p className="m-0 truncate text-xs font-semibold text-slate-500">
                               {character.name} · #{player.slot}
+                              {player.joinedMidGame && <span className="ml-2 font-bold text-emerald-600">tengah permainan</span>}
+                              {resting && <span className="ml-2 font-bold text-slate-400">istirahat</span>}
                             </p>
                           </div>
                           <span
-                            className={`h-3 w-3 shrink-0 rounded-full ${player.connected ? 'bg-emerald-500' : 'bg-amber-400'}`}
-                            title={player.connected ? 'Tersambung' : 'Terputus'}
+                            className={`h-3 w-3 shrink-0 rounded-full ${player.connected ? 'bg-emerald-500' : resting ? 'bg-slate-400' : 'bg-amber-400'}`}
+                            title={resting ? 'Istirahat' : player.connected ? 'Tersambung' : 'Terputus'}
                           ></span>
                         </div>
                       );

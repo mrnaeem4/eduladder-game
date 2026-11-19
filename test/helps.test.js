@@ -176,3 +176,61 @@ test('penerima soal lemparan tetap bisa memakai bantuan selain lempar', () => {
   E.handleUseHelp(state, 'p2', 'throwQuestion', throwSteps);
   assert.strictEqual(throwSteps.length, 0, 'soal tidak boleh dilempar ulang');
 });
+
+test('sisihkan 2 menghapus dua opsi salah dan mengurangi kuota', () => {
+  const state = started(3);
+  const before = state.helps.p1.eliminateTwo;
+  assert.ok(before > 0);
+  run(state, (steps) => E.handleUseHelp(state, 'p1', 'eliminateTwo', steps));
+  assert.strictEqual(state.eliminated.length, 2);
+  assert.strictEqual(state.eliminatedBy, 'p1');
+  state.eliminated.forEach((letter) => assert.notStrictEqual(letter, state.question.correctAnswer));
+  assert.strictEqual(new Set(state.eliminated).size, 2, 'dua huruf berbeda');
+  assert.strictEqual(state.helps.p1.eliminateTwo, before - 1);
+  assert.deepStrictEqual(E.publicSnapshot(state).eliminated.slice().sort(), state.eliminated.slice().sort());
+});
+
+test('sisihkan 2 hanya untuk pemilik giliran dan kuota', () => {
+  const state = started(3);
+  const other = [];
+  E.handleUseHelp(state, 'p2', 'eliminateTwo', other);
+  assert.strictEqual(other.length, 0, 'pemain lain ditolak');
+  state.helps.p1.eliminateTwo = 0;
+  const empty = [];
+  E.handleUseHelp(state, 'p1', 'eliminateTwo', empty);
+  assert.strictEqual(empty.length, 0, 'kuota habis ditolak');
+});
+
+test('sisihkan 2 ditolak saat fase bukan answering', () => {
+  const state = started(3);
+  state.phase = 'handoff';
+  const steps = [];
+  E.handleUseHelp(state, 'p1', 'eliminateTwo', steps);
+  assert.strictEqual(steps.length, 0);
+});
+
+test('sisihkan 2 direset saat soal baru dimulai', () => {
+  const state = started(3);
+  run(state, (steps) => E.handleUseHelp(state, 'p1', 'eliminateTwo', steps));
+  assert.strictEqual(state.eliminated.length, 2);
+  run(state, (steps) => E.handleAnswer(state, 'p1', 'A', false, steps));
+  run(state, (steps) => E.handleContinue(state, 'p2', steps));
+  assert.deepStrictEqual(state.eliminated, []);
+  assert.strictEqual(state.eliminatedBy, null);
+});
+
+test('sisihkan 2 direset saat ganti soal', () => {
+  const state = started(3);
+  run(state, (steps) => E.handleUseHelp(state, 'p1', 'eliminateTwo', steps));
+  assert.strictEqual(state.eliminated.length, 2);
+  run(state, (steps) => E.handleUseHelp(state, 'p1', 'changeQuestion', steps));
+  assert.deepStrictEqual(state.eliminated, []);
+});
+
+test('kuota default bantuan memuat Sisihkan 2 dengan nilai 2', () => {
+  assert.strictEqual(E.DEFAULT_HELPS().eliminateTwo, 2);
+  const help = E.HELPS.find((item) => item.key === 'eliminateTwo');
+  assert.ok(help);
+  assert.strictEqual(help.group, 'help');
+  assert.strictEqual(E.sanitizeHelpQuotas({}, E.DEFAULT_HELPS()).eliminateTwo, 2);
+});

@@ -44,6 +44,7 @@ function insertRoom(room) {
         shuffle: room.config ? room.config.shuffle !== false : true,
         helpQuotas: room.config ? room.config.helpQuotas : null,
         maxPlayers: E.sanitizeMaxPlayers(room.config ? room.config.maxPlayers : null),
+        allowLateJoin: room.config ? room.config.allowLateJoin !== false : true,
       }),
       serialize(room.questions || []),
       now,
@@ -260,6 +261,7 @@ function listRooms() {
       status: row.status,
       shuffle: config.shuffle !== false,
       maxPlayers: E.sanitizeMaxPlayers(config.maxPlayers),
+      allowLateJoin: config.allowLateJoin !== false,
       questionCount: questions.length,
       playerCount: players.length,
       players: players.map((item) => ({ name: item.name, slot: item.slot, char: item.char || 1 })),
@@ -287,8 +289,11 @@ function loadRoom(code) {
       shuffle: config.shuffle !== false,
       helpQuotas: config.helpQuotas || null,
       maxPlayers: E.sanitizeMaxPlayers(config.maxPlayers),
+      allowLateJoin: config.allowLateJoin !== false,
     },
     questions: parse(row.questions, []),
+    /* Status/istirahat pemain hanya berlaku di memori: setelah restart semua
+       pemain mendapat masa tenggang baru untuk reconnect. */
     players: players.map((player) => ({
       id: player.player_id,
       slot: player.slot,
@@ -297,6 +302,8 @@ function loadRoom(code) {
       token: player.token,
       kicked: Boolean(player.kicked),
       connected: false,
+      status: 'active',
+      restingSince: 0,
     })),
     state: runtime ? parse(runtime.state, null) : null,
     pendingCheckpoint: runtime ? parse(runtime.checkpoint, null) : null,

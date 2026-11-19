@@ -1967,4 +1967,18 @@
   }
 
   window.Board3D = Board3D;
+
+  /* Builder model dipakai juga oleh podium3d.js (podium memakai karakter
+     yang sama dengan papan). API kecil dan tanpa state. */
+  window.Board3DModels = {
+    build(form, style) {
+      const THREE = hasThree();
+      if (!THREE) throw new Error('Three.js tidak tersedia.');
+      const builder = MODEL_BUILDERS[form] || buildRobot;
+      return builder(THREE, style);
+    },
+    palette(character) {
+      return paletteFromCharacter(character);
+    },
+  };
 })();

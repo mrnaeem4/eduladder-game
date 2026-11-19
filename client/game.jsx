@@ -19,11 +19,17 @@
     const answeringPlayer = players.find((p) => p.id === activeId) || players[0];
     const currentPlayer = players.find((p) => p.id === currentId) || players[0];
     const [armTarget, setArmTarget] = useState(null);
-    const [helpsTab, setHelpsTab] = useState('help');
     /* Popup pemenang bisa ditutup agar papan tetap bisa dilihat. */
     const [winnerOpen, setWinnerOpen] = useState(true);
+    /* Podium 3D tampil sampai pemain memilih "Lihat papan". */
+    const [podiumOpen, setPodiumOpen] = useState(true);
     useEffect(() => {
-      if (st.phase === 'finished') setWinnerOpen(true);
+      if (st.phase === 'finished') {
+        setWinnerOpen(true);
+        setPodiumOpen(true);
+      } else {
+        setPodiumOpen(false);
+      }
     }, [st.phase]);
 
     const webgl = useMemo(() => UI.detectWebGL(), []);
@@ -57,10 +63,17 @@
       prevRef.current = { ...pos };
     }, [st.seq, positions, boardRef]);
 
-    const seconds = UI.useCountdown(st.deadline);
-    const canAnswer = Boolean(myId) && st.phase === 'answering' && activeId === myId && !st.revealed;
+    /* Durasi soal aktif = batas atas countdown; tanpa batas, selisih jam
+       perangkat bisa menampilkan angka ratusan detik. */
+    const questionDuration = question && question.question && question.question.duration ? question.question.duration : null;
+    const seconds = UI.useCountdown(st.deadline, questionDuration);
+    /* Selama animasi serangan soal dijeda: input ditutup dan overlay
+       disembunyikan agar efek di papan terlihat. */
+    const attackFx = st.attackFx || null;
+    const eliminated = Array.isArray(st.eliminated) ? st.eliminated : [];
+    const canAnswer = Boolean(myId) && st.phase === 'answering' && activeId === myId && !st.revealed && !attackFx;
     const isBonus = st.phase === 'bonus';
-    const canBonusAnswer = Boolean(myId) && isBonus && st.snakeLadder && st.snakeLadder.playerId === myId && !st.revealed;
+    const canBonusAnswer = Boolean(myId) && isBonus && st.snakeLadder && st.snakeLadder.playerId === myId && !st.revealed && !attackFx;
 
     const helpsForActive = st.helps[activeId] || {};
     const reward = question && question.question
@@ -76,6 +89,7 @@
       if (key === 'shield') return Boolean(st.shields[activeId]);
       if (key === 'penawar') return st.penawarId === activeId;
       if (key === 'doubleMove') return st.doubleId === activeId;
+      if (key === 'eliminateTwo') return eliminated.length > 0;
       return false;
     };
     const helpActive = (key) => {
@@ -84,6 +98,7 @@
       if (key === 'penawar') return st.penawarId === activeId;
       if (key === 'doubleMove') return st.doubleId === activeId;
       if (key === 'throwQuestion') return st.questionThrown;
+      if (key === 'eliminateTwo') return eliminated.length > 0;
       return false;
     };
 
@@ -112,6 +127,7 @@
     /* Peringkat final dihitung server (engine) dan ikut di snapshot. */
     const ranking = st.ranking || [];
     const showWinner = st.phase === 'finished';
+    const podiumActive = showWinner && podiumOpen;
 
     /* Overlay soal/bonus/handoff hanya untuk pemiliknya dan admin (layar IFP).
        Pemain lain tetap melihat papan + pil "Giliran <nama>". */
@@ -152,9 +168,6 @@
       onUseHelp: (key) => emit('game:useHelp', { key }),
       helpBlocked,
       helpActive,
-      helpDescription: 'Sentuh kartu bantuan untuk memakainya.',
-      helpsTab,
-      onHelpsTabChange: setHelpsTab,
       armSlots,
       showArms: !st.questionThrown,
       canUseArms,
@@ -164,24 +177,25 @@
       bankLeft: st.bankLeft,
       helpsLocked: false,
       canAnswer,
+      eliminated,
     } : null;
 
     return (
       <div className="play3d">
-        {use3d ? (
-          <>
+        {!podiumActive && (use3d ? (
+          <div className={attackFx ? 'scene-hidden' : ''}>
             <UI.Scene3D boardRef={boardRef} players={players} positions={positions} characterStyles={GE.CHARACTERS} onError={() => {}} onReady={() => {}} />
             <UI.ScoreFloats mode="3d" floats={scoreFloats} boardRef={boardRef} positions={positions} />
-          </>
+          </div>
         ) : (
           <div className="board-fallback"><div className="board-wrap">
             <UI.Board players={players} positions={positions} sessionWeapons={st.sessionWeapons}>
               <UI.ScoreFloats mode="2d" floats={scoreFloats} positions={positions} />
             </UI.Board>
           </div></div>
-        )}
+        ))}
 
-        <div className="hud">
+        <div className="hud" style={podiumActive ? { display: 'none' } : undefined}>
           <header className="hud-top">
             <div className="brand hud-brand"><span className="brand-mark"><i className="fa-solid fa-dice-five"></i></span>
               <div className="grow"><h1 className="brand-title">EduLadder Battle</h1>
@@ -213,7 +227,7 @@
             {players.map((p) => {
               const character = GE.characterStyle(p.char || p.slot);
               return (
-                <div key={p.id} className={`score-card ${currentId === p.id ? 'active' : ''}`} style={GE.themeVars(p)}>
+                <div key={p.id} className={`score-card ${currentId === p.id ? 'active' : ''} ${p.status === 'resting' ? 'resting' : ''}`} style={GE.themeVars(p)}>
                   <span
                     className="avatar"
                     style={{
@@ -231,7 +245,9 @@
                       {st.shields[p.id] && <span className="score-badge shield"><i className="fa-solid fa-shield-halved"></i></span>}
                       {st.penawarId === p.id && <span className="score-badge penawar"><i className="fa-solid fa-prescription-bottle-medical"></i></span>}
                       {st.locked[p.id] && <span className="score-badge locked"><i className="fa-solid fa-lock"></i></span>}
-                      {!p.connected && <span className="score-badge locked" title="Terputus"><i className="fa-solid fa-plug-circle-xmark"></i></span>}
+                      {p.status === 'resting' && <span className="score-badge locked" title="Istirahat (terputus)"><i className="fa-solid fa-bed"></i></span>}
+                      {!p.connected && p.status !== 'resting' && <span className="score-badge locked" title="Terputus"><i className="fa-solid fa-plug-circle-xmark"></i></span>}
+                      {p.joinedMidGame && <span className="score-badge locked" title="Bergabung di tengah permainan"><i className="fa-solid fa-user-plus"></i></span>}
                     </div>
                     <div className="score-pos">{positions[p.id]}<small>/100</small></div>
                     {(st.arms[p.id] || []).length > 0 && <UI.ArmBay slots={st.arms[p.id]} active={myId === p.id} canUse={canUseArms && myId === p.id} fired={armsFired} onPick={openArmPicker} />}
@@ -244,10 +260,23 @@
 
         {st.phase === 'countdown' && <UI.StartCountdown count={st.startCount} teamName={GE.playerNameOf(players[0])} />}
 
-        {st.phase === 'answering' && questionOverlayProps && canSeeQuestion && <UI.MainQuestionOverlay {...questionOverlayProps} />}
+        {st.phase === 'answering' && questionOverlayProps && canSeeQuestion && !attackFx && <UI.MainQuestionOverlay {...questionOverlayProps} />}
 
-        {isBonus && st.snakeLadder && question && question.question && canSeeBonus && (
-          <UI.BonusOverlay info={st.snakeLadder} question={question.clue ? { ...question.question, clue: question.clue } : question.question} seconds={seconds === null ? 0 : seconds} picked={question.picked} correctLetter={question.correct} revealed={Boolean(st.revealed)} players={players} onAnswer={(letter) => emit('game:answer', { letter })} canAnswer={canBonusAnswer} />
+        {isBonus && st.snakeLadder && question && question.question && canSeeBonus && !attackFx && (
+          <UI.BonusOverlay info={st.snakeLadder} question={question.clue ? { ...question.question, clue: question.clue } : question.question} seconds={seconds === null ? 0 : seconds} limit={questionDuration} picked={question.picked} correctLetter={question.correct} revealed={Boolean(st.revealed)} players={players} onAnswer={(letter) => emit('game:answer', { letter })} canAnswer={canBonusAnswer} />
+        )}
+
+        {attackFx && (
+          <div className="attack-reveal" role="status" aria-live="polite">
+            <i className={GE.weaponOf(attackFx.weapon).icon} aria-hidden="true"></i>
+            <span>
+              {GE.weaponOf(attackFx.weapon).label} milik{' '}
+              {GE.playerNameOf(players.find((p) => p.id === attackFx.actorId) || {})}
+              {' → '}
+              {GE.playerNameOf(players.find((p) => p.id === attackFx.targetId) || {})}
+              {attackFx.shielded ? ' ditahan Shield' : ''}
+            </span>
+          </div>
         )}
 
         {st.phase === 'handoff' && st.handoff && canSeeHandoff && (
@@ -269,9 +298,19 @@
           <UI.ArmTargetModal request={{ slot: armTarget.slot, targets: armTarget.targets }} actorName={GE.playerNameOf(currentPlayer)} describeEffect={(entry) => describeArmEffect(armTarget.slot, entry)} onConfirm={(targetId) => { emit('game:fireWeapon', { uid: armTarget.slot.uid, targetId }); setArmTarget(null); }} onClose={() => setArmTarget(null)} />
         )}
 
+        {podiumActive && (
+          <UI.PodiumStage
+            ranking={ranking}
+            players={players}
+            characterStyles={GE.CHARACTERS}
+            onClose={() => setPodiumOpen(false)}
+            onShowResults={() => { setPodiumOpen(false); setWinnerOpen(true); }}
+          />
+        )}
+
         {showWinner && winnerOpen && (
           <UI.Modal open onClose={() => setWinnerOpen(false)} labelledBy="winner-title">
-            <UI.Confetti active={showWinner} />
+            <UI.Confetti active={showWinner && !podiumActive} />
             <div className="modal-icon gold"><i className={`fa-solid ${st.winner === 'Seri' || !st.winner ? 'fa-handshake' : 'fa-trophy'}`}></i></div>
             <h2 id="winner-title">{st.winner === 'Seri' ? 'Permainan Seri!' : st.winner ? `${GE.playerNameOf(players.find((p) => p.id === st.winner) || players[0])} Menang!` : 'Permainan Selesai'}</h2>
             <p className="lead">{st.winnerReason}</p>
@@ -288,7 +327,7 @@
           </UI.Modal>
         )}
 
-        {showWinner && !winnerOpen && (
+        {showWinner && !winnerOpen && !podiumActive && (
           <button type="button" className="btn btn-primary result-reopen" onClick={() => setWinnerOpen(true)}>
             <i className="fa-solid fa-trophy" aria-hidden="true"></i> Lihat hasil
           </button>

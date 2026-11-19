@@ -524,6 +524,7 @@
     const [bankId, setBankId] = useState('');
     const [shuffle, setShuffle] = useState(true);
     const [maxPlayers, setMaxPlayers] = useState(GE.DEFAULT_MAX_PLAYERS || 4);
+    const [allowLateJoin, setAllowLateJoin] = useState(true);
     const [quotas, setQuotas] = useState(() => GE.DEFAULT_HELPS());
     const [busy, setBusy] = useState(false);
     const [message, setMessage] = useState('');
@@ -545,7 +546,7 @@
       if (!bankId) return;
       setBusy(true);
       setMessage('');
-      Net.request('/api/rooms', { method: 'POST', body: { bankId, config: { shuffle, helpQuotas: quotas, maxPlayers } } })
+      Net.request('/api/rooms', { method: 'POST', body: { bankId, config: { shuffle, helpQuotas: quotas, maxPlayers, allowLateJoin } } })
         .then((data) => { loadRooms(); onOpenRoom(data.code); })
         .catch((e) => setMessage(e.message))
         .finally(() => setBusy(false));
@@ -592,6 +593,10 @@
                 <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={shuffle} onChange={(e) => setShuffle(e.target.checked)} />
                 Acak urutan soal
               </label>
+              <label className="flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-800">
+                <input type="checkbox" className="h-4 w-4 accent-indigo-600" checked={allowLateJoin} onChange={(e) => setAllowLateJoin(e.target.checked)} />
+                Izinkan join saat permainan berjalan
+              </label>
               <div>
                 <label className={T.label} htmlFor="room-max-players">Maksimal pemain</label>
                 <input
@@ -606,6 +611,11 @@
                 <p className={T.hint}>2–25 pemain (default 4). Tidak bisa diubah setelah room dibuat.</p>
               </div>
             </div>
+            <p className={`${T.hint} -mt-2`}>
+              {allowLateJoin
+                ? 'Pemain baru masuk sebagai pemain (mulai kotak 1) selama room belum penuh.'
+                : 'Pemain yang datang setelah Mulai hanya menjadi penonton.'}
+            </p>
 
             <div>
               <p className={`${T.headingLabel} mb-2`}>Kuota bantuan per pemain</p>

@@ -34,7 +34,7 @@ security.configure({
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: config.corsOrigin } });
-const manager = new RoomManager();
+const manager = new RoomManager({ graceMs: config.disconnectGraceSeconds * 1000 });
 
 app.use(express.json({ limit: config.jsonLimit }));
 app.use(express.text({ type: ['text/csv', 'text/plain'], limit: config.csvLimit }));
@@ -205,12 +205,20 @@ function roomSummary(room) {
     code: room.code,
     bankName: room.bankName,
     phase: room.state ? room.state.phase : 'lobby',
-    players: room.players.map((item) => ({ id: item.id, slot: item.slot, char: item.char || 1, name: item.name, connected: Boolean(item.connected) })),
+    players: room.players.map((item) => ({
+      id: item.id,
+      slot: item.slot,
+      char: item.char || 1,
+      name: item.name,
+      connected: Boolean(item.connected),
+      status: item.status || 'active',
+    })),
     bankCount: room.questions.length,
     config: {
       shuffle: room.config.shuffle !== false,
       helpQuotas: E.sanitizeHelpQuotas(room.config.helpQuotas, E.DEFAULT_HELPS()),
       maxPlayers: E.sanitizeMaxPlayers(room.config.maxPlayers),
+      allowLateJoin: room.config.allowLateJoin !== false,
     },
   };
 }
@@ -250,6 +258,7 @@ app.post('/api/rooms', requireAdmin, (req, res) => {
       shuffle: config.shuffle !== false,
       helpQuotas: E.sanitizeHelpQuotas(config.helpQuotas, E.DEFAULT_HELPS()),
       maxPlayers: E.sanitizeMaxPlayers(config.maxPlayers),
+      allowLateJoin: config.allowLateJoin !== false,
     });
     room.setIo(io);
     return res.status(201).json({ code: room.code, bankName: bank.name, bankCount: questions.length });
@@ -274,6 +283,7 @@ app.get('/api/rooms/:code', (req, res) => {
       shuffle: record.config.shuffle !== false,
       helpQuotas: E.sanitizeHelpQuotas(record.config.helpQuotas, E.DEFAULT_HELPS()),
       maxPlayers: E.sanitizeMaxPlayers(record.config.maxPlayers),
+      allowLateJoin: record.config.allowLateJoin !== false,
     },
     persisted: true,
   });
@@ -366,6 +376,7 @@ const MESSAGES = {
   not_owner: 'Aksi ini bukan milikmu.',
   unavailable: 'Bantuan tidak bisa dipakai sekarang.',
   invalid: 'Aksi tidak sah.',
+  busy: 'Tunggu animasi serangan selesai.',
   not_admin: 'Hanya admin yang boleh melakukan ini.',
   not_found_player: 'Pemain tidak ditemukan.',
   unauthorized: 'Sesi admin tidak valid. Silakan login ulang.',
@@ -395,6 +406,7 @@ function joinRoom(socket, payload) {
     const member = room.reconnectMember(data.token || null, data.name);
     if (member && !member.error) {
       identity = member;
+      if (member.back) notice = 'Kamu kembali bermain.';
     } else {
       const joined = room.joinPlayer(data.name, data.slot, data.token || null);
       if (joined.error) return handleError(socket, joined.error);
@@ -484,6 +496,13 @@ io.on('connection', (socket) => {
     });
   });
 
+  socket.on('lobby:react', (payload) => {
+    playerAction((room, playerId) => {
+      const result = room.react(playerId, payload && payload.key);
+      if (result.error && result.error !== 'rate_limited') handleError(socket, result.error);
+    });
+  });
+
   socket.on('admin:start', () => {
     adminAction((room) => {
       const result = room.start();
@@ -535,8 +554,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    const room = roomFor(socket);
+    const room = manager.get(socket.roomCode) || (socket.roomCode ? manager.ensure(socket.roomCode) : null);
     if (!room) return;
+    /* Sesi yang sudah ditutup admin tidak lagi menunggu siapa pun. */
+    if (room.closed) return;
     room.detach(socket);
   });
 });

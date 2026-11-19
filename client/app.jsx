@@ -12,6 +12,8 @@
     const [screen, setScreen] = useState('landing');
     const [snapshot, setSnapshot] = useState(null);
     const [question, setQuestion] = useState(null);
+    const [reactions, setReactions] = useState([]);
+    const reactionSeqRef = useRef(0);
     const [toasts, setToasts] = useState([]);
     const [flash, setFlash] = useState(null);
     const [scoreFloats, setScoreFloats] = useState([]);
@@ -63,11 +65,17 @@
       if (!socket) return undefined;
 
       const onSnapshot = (data) => {
+        /* Sinkronkan jam server untuk countdown yang akurat. */
+        if (data && data.serverNow) Net.trackServerNow(data.serverNow);
         setSnapshot(data);
         setError('');
         setScreen((current) => (current === 'setup' || current === 'login' ? 'room' : current === 'landing' ? 'room' : current));
       };
-      const onQuestion = (data) => setQuestion(data);
+      const onQuestion = (data) => {
+        /* Jam server pada payload soal dipakai sebagai sampel offset terbaru. */
+        if (data && data.serverNow) Net.trackServerNow(data.serverNow);
+        setQuestion(data);
+      };
       const onEvents = (events) => {
         (events || []).forEach((event) => {
           if (!event) return;
@@ -109,6 +117,12 @@
         if (data.code === 'unauthorized') setAdminSession(Net.loadAdminSession());
       };
       const onNotice = (data) => pushToast(data.message, 'info');
+      const onReaction = (data) => {
+        if (!data || !data.playerId || !data.key) return;
+        const id = ++reactionSeqRef.current;
+        setReactions((prev) => [...prev.slice(-12), { id, playerId: data.playerId, key: data.key }]);
+        setTimeout(() => setReactions((prev) => prev.filter((item) => item.id !== id)), 3200);
+      };
 
       socket.on('room:snapshot', onSnapshot);
       socket.on('question', onQuestion);
@@ -116,6 +130,7 @@
       socket.on('room:token', onToken);
       socket.on('room:error', onError);
       socket.on('room:notice', onNotice);
+      socket.on('lobby:reaction', onReaction);
       socket.on('room:closed', (data) => {
         const reason = data && data.reason;
         /* Hanya penutupan yang benar-benar mengakhiri sesi. 'finished' bukan
@@ -276,7 +291,7 @@
         if (snapshot.state) {
           return <window.GameScreen snapshot={snapshot} question={question} emit={emit} boardRef={boardRef} scoreFloats={scoreFloats} soundOn={soundOn} setSoundOn={setSoundOn} musicOn={musicOn} setMusicOn={setMusicOn} onLeave={leaveRoom} />;
         }
-        return <window.LobbyScreen snapshot={snapshot} emit={emit} onLeave={leaveRoom} />;
+        return <window.LobbyScreen snapshot={snapshot} emit={emit} onLeave={leaveRoom} reactions={reactions} />;
       }
       if (screen === 'login') {
         return <Screens.AdminLoginScreen onLoggedIn={(session) => { setAdminSession(session); setScreen('setup'); }} onBack={() => setScreen('landing')} error={error} />;

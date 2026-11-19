@@ -18,6 +18,7 @@ const DEFAULTS = {
   loginWindowSeconds: 60,
   jsonLimit: '2mb',
   csvLimit: '1mb',
+  disconnectGraceSeconds: 10,
 };
 
 const MAX_SESSION_HOURS = 24 * 7;
@@ -120,6 +121,7 @@ function loadConfig(env) {
     publicUrl: '',
     jsonLimit: DEFAULTS.jsonLimit,
     csvLimit: DEFAULTS.csvLimit,
+    disconnectGraceSeconds: DEFAULTS.disconnectGraceSeconds,
   };
 
   /* PORT */
@@ -197,6 +199,18 @@ function loadConfig(env) {
   const csv = parseByteLimit(clean(source, 'EDULADDER_CSV_LIMIT'), DEFAULTS.csvLimit);
   if (csv.error) errors.push(`EDULADDER_CSV_LIMIT: ${csv.error}`);
   else config.csvLimit = csv.limit;
+
+  /* Masa tenggang pemain terputus sebelum dinyatakan istirahat (detik).
+     0 = langsung istirahat. */
+  const rawGrace = clean(source, 'EDULADDER_DISCONNECT_GRACE_SECONDS');
+  if (rawGrace) {
+    const grace = toInt(rawGrace);
+    if (grace === null || grace < 0 || grace > 600) {
+      errors.push('EDULADDER_DISCONNECT_GRACE_SECONDS: harus bilangan bulat 0-600');
+    } else {
+      config.disconnectGraceSeconds = grace;
+    }
+  }
 
   return { config, errors };
 }
