@@ -99,6 +99,13 @@
     return '';
   }
 
+  /* Soal/opsi/clue yang memuat baris baru atau tab (mis. kode) ditampilkan
+     monospace dan dipertahankan spasinya lewat CSS .code-text. */
+  const isCodeText = (text) => /[\n\t]/.test(String(text === undefined || text === null ? '' : text));
+  const codeClass = (text) => (isCodeText(text) ? 'code-text' : '');
+  /* Pembaca layar tidak perlu karakter kontrol; ganti dengan spasi. */
+  const spokenText = (text) => String(text === undefined || text === null ? '' : text).replace(/[\n\t]+/g, ' ');
+
   /* ------------------------------------------------------------------ */
   /* Board 2D (fallback)                                                 */
   /* ------------------------------------------------------------------ */
@@ -329,18 +336,20 @@
               stateClass = 'dimmed';
             }
           }
+          const text = optionText(option);
+          const code = isCodeText(text);
           return (
             <button
               key={letter}
               type="button"
-              className={`answer overlay-answer ${stateClass}`}
+              className={`answer overlay-answer ${stateClass} ${code ? 'has-code' : ''}`}
               onClick={() => onAnswer && onAnswer(letter)}
               disabled={disabled || showAnswer || isStruck}
-              aria-label={`Pilihan ${letter}: ${optionText(option)}${isStruck ? ' (disisihkan)' : ''}`}
+              aria-label={`Pilihan ${letter}: ${spokenText(text)}${isStruck ? ' (disisihkan)' : ''}`}
             >
               <span className="letter">{letter}</span>
-              <span className="answer-text">
-                {optionText(option)}
+              <span className={`answer-text ${codeClass(text)}`}>
+                {text}
                 <Img src={optionImage(option)} alt={`Gambar pilihan ${letter}`} className="option-image" />
               </span>
               {isStruck && !showAnswer && <span className="eliminated-tag">disisihkan</span>}
@@ -606,12 +615,12 @@
               <Countdown seconds={seconds} limit={question.duration} theme={themeVars(answeringPlayer)} />
             </div>
 
-            <h2 className="overlay-question">{question.question}</h2>
+            <h2 className={`overlay-question ${codeClass(question.question)}`}>{question.question}</h2>
             <Img src={question.questionImage} alt="Gambar soal" className="question-image" />
             {showClue && question.clue && (
               <div className="clue-box overlay-clue">
                 <i className="fa-solid fa-lightbulb" aria-hidden="true"></i>
-                <span>{question.clue}</span>
+                <span className={codeClass(question.clue)}>{question.clue}</span>
               </div>
             )}
 
@@ -727,7 +736,7 @@
               <Countdown seconds={seconds} limit={limit || question.duration} theme={themeVars(player)} />
             </div>
 
-            <h2 className="overlay-question">{question.question}</h2>
+            <h2 className={`overlay-question ${codeClass(question.question)}`}>{question.question}</h2>
             <Img src={question.questionImage} alt="Gambar soal" className="question-image" />
             <p className="overlay-lead">
               {isLadder

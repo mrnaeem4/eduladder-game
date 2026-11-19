@@ -1,3 +1,7 @@
+  /* Terjemahkan penanda teks multi-baris pada soal/opsi/clue:
+     \\n \\t \\r (escape satu backslash) menjadi karakter kontrol, sedangkan
+     \\\\n \\\\t \\\\r (dua backslash) tetap menjadi teks literal "\\n" dst.
+     <br>, <br/>, dan <br /> diperlakukan sebagai baris baru. Bukan untuk URL. */
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
@@ -106,11 +110,53 @@
     'Siapa presiden pertama Indonesia?;Soeharto;Soekarno;Habibie;Megawati;B;Proklamator kemerdekaan;6;3;20',
     'Berapa hasil dari 5 x 3?;10;15;20;25;B;Perkalian dasar;5;3;15',
     'Planet terdekat dengan matahari?;Venus;Mars;Merkurius;Bumi;C;Planet pertama dari matahari;4;2;12',
+    'Apa keluaran kode ini? Tulis jawaban tanpa spasi.\\nfor i in range(2):\\n\\tprint(i);0 1;0 0;1 2;1 1;A;Gunakan \\\\t untuk indentasi tab;4;2;20',
   ];
 
   /* ------------------------------------------------------------------ */
   /* Helper murni                                                        */
   /* ------------------------------------------------------------------ */
+
+  function decodeEscapes(text) {
+    let out = String(text === undefined || text === null ? '' : text).replace(/\r\n?/g, '\n');
+    out = out.replace(/<br\s*\/?>/gi, '\n');
+    out = out.replace(/\\\\([ntr])/gi, '\u0000$1');
+    out = out.replace(/\\([ntr])/gi, (match, code) => {
+      const lower = code.toLowerCase();
+      if (lower === 'n') return '\n';
+      if (lower === 't') return '\t';
+      return '\r';
+    });
+    out = out.replace(/\u0000([ntr])/gi, '\\$1');
+    return out;
+  }
+
+  function splitRecords(text) {
+    const source = String(text === undefined || text === null ? '' : text);
+    const records = [];
+    let current = '';
+    let quoted = false;
+    for (let i = 0; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === '"') {
+        if (quoted && source[i + 1] === '"') {
+          current += '""';
+          i++;
+          continue;
+        }
+        quoted = !quoted;
+        current += ch;
+      } else if (ch === '\n' && !quoted) {
+        records.push(current);
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+    records.push(current);
+    return records.filter((record) => record.trim().length > 0);
+  }
+
 
   const pad = (value) => value.toString().padStart(2, '0');
   const formatTime = (seconds) => `${pad(Math.floor(seconds / 60))}:${pad(Math.floor(seconds % 60))}`;
@@ -175,7 +221,6 @@
     });
     return best;
   }
-
 
   function playerNameOf(player) {
     return (player && player.name && player.name.trim()) || `Pemain ${player ? player.slot : ''}`.trim();
@@ -430,9 +475,18 @@
     return fields;
   }
 
+  /* Terjemahkan penanda teks multi-baris pada soal/opsi/clue:
+     \n \t \r (escape satu backslash) menjadi karakter kontrol, sedangkan
+     \\n \\t \\r (dua backslash) tetap menjadi teks literal "\n" dst.
+     <br>, <br/> dan <br /> diperlakukan sebagai baris baru. Bukan untuk URL. */
+
+  /* Pisahkan CSV menjadi record. Newline di dalam sel ber-quote adalah isi
+     field (Excel "wrap text"), sehingga satu soal boleh menempati beberapa
+     baris fisik. Record kosong dilewati. */
+
   function parseCsv(text) {
     const normalized = String(text || '').replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
-    let lines = normalized.split('\n').filter((line) => line.trim().length > 0);
+    let lines = splitRecords(normalized);
     const errors = [];
     const questions = [];
     let rowNumber = 1;
@@ -444,7 +498,8 @@
     lines.forEach((line) => {
       rowNumber += 1;
       const parts = splitDelimited(line, ';');
-      const questionText = (parts[0] || '').trim();
+      const textField = (value) => decodeEscapes(value).trim();
+      const questionText = textField(parts[0] || '');
       if (!questionText) return;
 
       const correctAnswer = (parts[5] || '').trim().toUpperCase();
@@ -470,13 +525,13 @@
         question: questionText,
         questionImage: isValidImageUrl((parts[10] || '').trim()) ? (parts[10] || '').trim() : '',
         options: [
-          { text: (parts[1] || 'Pilihan A').trim(), imageUrl: isValidImageUrl((parts[11] || '').trim()) ? (parts[11] || '').trim() : '' },
-          { text: (parts[2] || 'Pilihan B').trim(), imageUrl: isValidImageUrl((parts[12] || '').trim()) ? (parts[12] || '').trim() : '' },
-          { text: (parts[3] || 'Pilihan C').trim(), imageUrl: isValidImageUrl((parts[13] || '').trim()) ? (parts[13] || '').trim() : '' },
-          { text: (parts[4] || 'Pilihan D').trim(), imageUrl: isValidImageUrl((parts[14] || '').trim()) ? (parts[14] || '').trim() : '' },
+          { text: textField(parts[1] || 'Pilihan A'), imageUrl: isValidImageUrl((parts[11] || '').trim()) ? (parts[11] || '').trim() : '' },
+          { text: textField(parts[2] || 'Pilihan B'), imageUrl: isValidImageUrl((parts[12] || '').trim()) ? (parts[12] || '').trim() : '' },
+          { text: textField(parts[3] || 'Pilihan C'), imageUrl: isValidImageUrl((parts[13] || '').trim()) ? (parts[13] || '').trim() : '' },
+          { text: textField(parts[4] || 'Pilihan D'), imageUrl: isValidImageUrl((parts[14] || '').trim()) ? (parts[14] || '').trim() : '' },
         ],
         correctAnswer,
-        clue: (parts[6] || 'Tidak ada clue').trim(),
+        clue: textField(parts[6] || 'Tidak ada clue'),
         reward: parseRange(parts[7], 5, 1, 12),
         penalty: parseRange(parts[8], 3, 1, 10),
         duration: parseRange(parts[9], 15, 5, 180),
@@ -1626,6 +1681,8 @@
     normalizeBag,
     sanitizeHelpQuotas,
     isValidImageUrl,
+    decodeEscapes,
+    splitRecords,
     normalizeQuestion,
     validateQuestions,
     rowCases,

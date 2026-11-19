@@ -49,7 +49,7 @@ Pemain membuka alamat **Jaringan** (atau memindai QR di layar lobi), memasukkan 
 ## Alur pemakaian
 
 1. **Admin** membuka panel admin, login dengan password, lalu mengelola bank soal.
-2. **Bank soal** bisa dibuat lewat editor GUI (tambah/edit/hapus/urutkan soal) atau diimpor massal dari CSV. Setiap soal dan setiap pilihan boleh punya URL gambar.
+2. **Bank soal** bisa dibuat lewat editor GUI (tambah/edit/hapus/urutkan soal) atau diimpor massal dari CSV. Setiap soal dan setiap pilihan boleh punya URL gambar. Soal kode multi-baris: Enter dan Tab langsung di editor, atau penanda `\n`/`\t` di CSV (lihat *Baris baru dan tab*).
 3. Admin membuat **room** dari sebuah bank soal, mengatur **kuota bantuan** per pemain, **maksimal pemain** (2–25, default 4), dan opsi **izinkan join saat berjalan**, lalu membagikan kode room/QR. Batas pemain dan opsi join hanya bisa diset saat room dibuat.
 4. Pemain bergabung dengan kode room + nama, lalu memilih satu dari **10 karakter** di lobi (boleh sama antar pemain; bisa diganti sampai admin menekan Mulai).
 5. Setelah minimal 2 pemain bergabung dan bank soal mencukupi, admin menekan **Mulai Permainan**.
@@ -74,6 +74,27 @@ Pertanyaan;Pilihan A;Pilihan B;Pilihan C;Pilihan D;Jawaban Benar;Clue;Reward;Pen
 - Gambar berupa **URL** (`http`/`https`), bukan unggahan file. URL tidak valid ditolak dan dilaporkan per baris.
 - Server tidak pernah mengambil gambar; browser yang memuatnya (`loading="lazy"`, `referrerpolicy="no-referrer"`), dan gambar gagal dimuat disembunyikan.
 - Template CSV bisa diunduh dari panel admin.
+
+### Baris baru dan tab (soal kode)
+
+Soal, pilihan, dan clue boleh memuat beberapa baris dan indentasi tab. Penanda berikut hanya diterjemahkan saat **impor CSV** (termasuk file Excel yang disimpan sebagai CSV), tidak pada URL gambar:
+
+| Penanda | Hasil |
+|---|---|
+| `\n` atau `\r\n` | Baris baru |
+| `\t` | Tab (indentasi) |
+| `\\n`, `\\t`, `\\r` | Teks literal `\n`, `\t`, `\r` (dua karakter) |
+| `<br>`, `<br/>`, `<br />` | Baris baru (sering ditulis Excel untuk sel "wrap text") |
+
+- Sel ber-quote yang memuat baris baru sungguhan (hasil **Alt+Enter** di Excel) juga terbaca sebagai satu soal, bukan terpotong menjadi beberapa baris rusak.
+- Di editor admin, kolom **Pertanyaan** berupa kotak multi-baris: Enter menambah baris dan **Tab** menyisipkan indentasi (Shift+Tab mengurangi). Setiap tab dihitung satu karakter terhadap batas 1000 karakter.
+- Soal/opsi/clue yang memuat baris baru atau tab tampil dengan huruf monospace dan spasinya dipertahankan.
+
+Contoh satu baris CSV berisi kode:
+
+```
+Apa keluaran kode ini?\nfor i in range(2):\n\tprint(i);0 1;0 0;1 2;1 1;A;Gunakan \\t untuk indentasi;4;2;20
+```
 
 ## Kuota bantuan
 
@@ -121,6 +142,7 @@ Kolom: `Room;Waktu;Jenis;Pertanyaan;Pemain;Slot;Karakter;Jawaban;Teks Jawaban;Ku
 
 - `Jenis` = `Soal utama`, `Bonus tangga`, atau `Bonus ular`. Bonus selalu `Delta Langkah = 0` (animasi +N/−N tidak berlaku untuk bonus).
 - `Jawaban` kosong saat timeout; `Teks Jawaban` berisi teks pilihan yang dipilih.
+- Soal/opsi yang memuat baris baru atau tab ditulis sebagai sel ber-quote (RFC 4180), sehingga tetap valid saat dibuka di Excel.
 - Pertandingan lama (sebelum fitur ini) hanya menghasilkan file berisi header.
 - Menghapus entri riwayat ikut menghapus jawabannya; menghapus room membuang jawaban yang tidak pernah diarsipkan.
 

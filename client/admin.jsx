@@ -130,6 +130,8 @@
   function QuestionEditor({ index, value, total, onChange, onRemove, onMove }) {
     const [imageErrors, setImageErrors] = useState({});
     const [open, setOpen] = useState(index === 0);
+    const textRef = useRef(null);
+    const pendingCaret = useRef(null);
     const set = (patch) => onChange({ ...value, ...patch });
     const setOption = (i, patch) => {
       const options = value.options.slice();
@@ -139,7 +141,66 @@
     const validateUrl = (key, url) => {
       setImageErrors((prev) => ({ ...prev, [key]: Boolean(url) && !GE.isValidImageUrl(url) }));
     };
-    const summary = value.question.trim() || 'Belum ada pertanyaan';
+    /* Teks soal boleh berisi baris baru dan tab (soal kode). Newline pertama
+       saja yang tampil di ringkasan header. */
+    const firstLine = value.question.split('\n')[0].trim();
+    const summary = firstLine || 'Belum ada pertanyaan';
+
+    /* Tab/Shift+Tab di textarea mengubah indentasi; fokus tidak berpindah. */
+    const onTextKeyDown = (event) => {
+      if (event.key !== 'Tab') return;
+      const el = event.currentTarget;
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const text = el.value;
+      event.preventDefault();
+      if (event.shiftKey) {
+        if (start === end && start > 0) {
+          if (text[start - 1] === '\t') {
+            pendingCaret.current = start - 1;
+            set({ question: text.slice(0, start - 1) + text.slice(start) });
+          } else if (text.slice(Math.max(0, start - 4), start) === '    ') {
+            pendingCaret.current = start - 4;
+            set({ question: text.slice(0, start - 4) + text.slice(start) });
+          }
+          return;
+        }
+        const from = text.lastIndexOf('\n', start - 1) + 1;
+        let to = text.indexOf('\n', end);
+        if (to < 0) to = text.length;
+        const block = text.slice(from, to);
+        let removed = 0;
+        const nextBlock = block.split('\n').map((line) => {
+          if (line.startsWith('\t')) {
+            removed += 1;
+            return line.slice(1);
+          }
+          if (line.startsWith('    ')) {
+            removed += 4;
+            return line.slice(4);
+          }
+          return line;
+        }).join('\n');
+        if (removed === 0) return;
+        pendingCaret.current = Math.max(from, start - 1);
+        set({ question: text.slice(0, from) + nextBlock + text.slice(to) });
+        return;
+      }
+      if (start === end) {
+        pendingCaret.current = start + 1;
+        set({ question: text.slice(0, start) + '\t' + text.slice(start) });
+        return;
+      }
+      pendingCaret.current = start + (end - start);
+      set({ question: text.slice(0, start) + '\t' + text.slice(start) });
+    };
+
+    useEffect(() => {
+      if (pendingCaret.current === null || !textRef.current) return;
+      const caret = pendingCaret.current;
+      pendingCaret.current = null;
+      textRef.current.setSelectionRange(caret, caret);
+    });
 
     return (
       <article className="overflow-hidden rounded-xl border border-slate-200 bg-white">
@@ -174,12 +235,16 @@
                 <label className={T.label} htmlFor={`q-${index}-text`}>Pertanyaan</label>
                 <textarea
                   id={`q-${index}-text`}
-                  rows={2}
-                  className={T.textarea}
+                  ref={textRef}
+                  rows={4}
+                  spellCheck={false}
+                  className={`${T.textarea} font-mono`}
                   value={value.question}
                   onChange={(e) => set({ question: e.target.value })}
+                  onKeyDown={onTextKeyDown}
                   placeholder="Tulis pertanyaan…"
                 />
+                <p className={T.hint}>Enter = baris baru, Tab = indentasi (Shift+Tab mengurangi). Satu tab dihitung satu karakter.</p>
               </div>
 
               <div>

@@ -98,8 +98,28 @@ test('redactQuestion tidak membocorkan kunci dan membawa gambar', () => {
   assert.strictEqual(redacted.options[1].text, 'b');
 });
 
-test('persistensi bank soal: gambar bertahan setelah disimpan', () => {
-  const dbPath = tempDb('bank');
+test('persistensi bank soal: newline dan tab pada teks bertahan', () => {
+  const dbPath = tempDb('text');
+  try { fs.unlinkSync(dbPath); } catch (e) { /* ignore */ }
+  process.env.EDULADDER_DB = dbPath;
+  const db = require(path.join('..', 'server', 'db'));
+  db.open();
+  const source = E.normalizeQuestion({
+    question: 'Kode:\n\tprint(1)\n\tprint(2)',
+    options: [{ text: '1\n2' }, { text: '\t3' }, { text: 'c' }, { text: 'd' }],
+    correctAnswer: 'A',
+    clue: 'pakai\nindentasi\ttab',
+  }, 0);
+  const bank = db.saveBank({ name: 'Kode', questions: [source], errors: [] });
+  const loaded = db.loadQuestions(bank.id)[0];
+  assert.strictEqual(loaded.question, source.question);
+  assert.strictEqual(loaded.options[0].text, '1\n2');
+  assert.strictEqual(loaded.options[1].text, '\t3');
+  assert.strictEqual(loaded.clue, 'pakai\nindentasi\ttab');
+  db.close();
+});
+
+test('persistensi bank soal: gambar bertahan setelah disimpan', () => {  const dbPath = tempDb('bank');
   try { fs.unlinkSync(dbPath); } catch (e) { /* ignore */ }
   process.env.EDULADDER_DB = dbPath;
   const db = require(path.join('..', 'server', 'db'));

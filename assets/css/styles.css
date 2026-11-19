@@ -1121,6 +1121,31 @@ body.is-playing {
   margin-top: 0.15rem;
 }
 
+.clue-box > span:last-child {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  -moz-tab-size: 4;
+}
+
+/* Teks soal/opsi/clue berisi kode (memuat baris baru atau tab). */
+.code-text {
+  font-family: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.88em;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+
+.answer.has-code,
+.overlay-answer.has-code {
+  align-items: flex-start;
+}
+
+.answer.has-code .letter,
+.overlay-answer.has-code .letter {
+  margin-top: 0.15rem;
+}
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(0.4rem); }
   to { opacity: 1; transform: translateY(0); }
@@ -2702,9 +2727,13 @@ body.is-playing {
 .overlay-question {
   font-size: clamp(1.4rem, 2.2vw, 2.6rem);
   font-weight: 800;
-  line-height: 1.26;
+  line-height: 1.3;
   letter-spacing: -0.01em;
   color: #f8fafc;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  -moz-tab-size: 4;
 }
 
 .overlay-lead {
@@ -2763,6 +2792,10 @@ body.is-playing {
 
 .overlay-answer .answer-text {
   color: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+  -moz-tab-size: 4;
 }
 
 .overlay-answer .letter {
