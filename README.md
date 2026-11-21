@@ -51,7 +51,7 @@ Pemain membuka alamat **Jaringan** (atau memindai QR di layar lobi), memasukkan 
 1. **Admin** membuka panel admin, login dengan password, lalu mengelola bank soal.
 2. **Bank soal** bisa dibuat lewat editor GUI (tambah/edit/hapus/urutkan soal) atau diimpor massal dari CSV. Setiap soal dan setiap pilihan boleh punya URL gambar. Soal kode multi-baris: Enter dan Tab langsung di editor, atau penanda `\n`/`\t` di CSV (lihat *Baris baru dan tab*).
 3. Admin membuat **room** dari sebuah bank soal, mengatur **kuota bantuan** per pemain, **maksimal pemain** (2–25, default 4), dan opsi **izinkan join saat berjalan**, lalu membagikan kode room/QR. Batas pemain dan opsi join hanya bisa diset saat room dibuat.
-4. Pemain bergabung dengan kode room + nama, lalu memilih satu dari **10 karakter** di lobi (boleh sama antar pemain; bisa diganti sampai admin menekan Mulai).
+4. Pemain bergabung dengan kode room + nama, lalu memilih satu dari **10 karakter** di lobi (boleh sama antar pemain; bisa diganti sampai admin menekan Mulai). Tombol **Panduan** di header lobi membuka ringkasan alur permainan, bantuan, senjata, dan aturannya; kuota bantuan di panduan mengikuti room tersebut.
 5. Setelah minimal 2 pemain bergabung dan bank soal mencukupi, admin menekan **Mulai Permainan**.
 6. Hanya pemilik soal aktif (dan layar admin/IFP) yang melihat overlay soal; pemain lain tetap melihat papan dan pil pojok **Giliran <nama>**.
 7. Saat pertandingan selesai, hasil otomatis tercatat di tab **Riwayat**.

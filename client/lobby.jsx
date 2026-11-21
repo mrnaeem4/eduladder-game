@@ -2,6 +2,7 @@
    dibungkus IIFE agar binding top-level tidak bentrok antar berkas. */
 (function () {
   'use strict';
+  const { useState } = React;
   /* Reaksi statis tanpa aset: emoji + label. Kunci harus sama dengan server. */
   const REACTIONS = [
     { key: 'thumbs', emoji: '👍', label: 'Mantap' },
@@ -13,6 +14,7 @@
   ];
 
   function LobbyScreen({ snapshot, emit, onLeave, reactions }) {
+    const [guideOpen, setGuideOpen] = useState(false);
     const QrCode = window.Screens.QrCode;
     const T = window.Screens.T;
     const GE = window.GameEngine;
@@ -43,10 +45,21 @@
                 <p className="m-0 text-sm font-semibold text-slate-500">Lobi · {snapshot.bankName}</p>
               </div>
             </div>
-            <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-bold text-indigo-700 ring-2 ring-indigo-200">
-              <i className="fa-solid fa-users" aria-hidden="true"></i>
-              {players.length}/{maxPlayers} pemain
-            </span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                aria-haspopup="dialog"
+                aria-expanded={guideOpen}
+                onClick={() => setGuideOpen(true)}
+                className="inline-flex items-center gap-2 rounded-full border-2 border-indigo-200 bg-white px-4 py-2 text-sm font-bold text-indigo-700 transition hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+              >
+                <i className="fa-solid fa-circle-question" aria-hidden="true"></i> Panduan
+              </button>
+              <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-bold text-indigo-700 ring-2 ring-indigo-200">
+                <i className="fa-solid fa-users" aria-hidden="true"></i>
+                {players.length}/{maxPlayers} pemain
+              </span>
+            </div>
           </header>
 
           {me && (
@@ -244,6 +257,15 @@
             </div>
           </div>
         </div>
+
+        {window.UI && window.UI.GuideModal && (
+          <window.UI.GuideModal
+            open={guideOpen}
+            onClose={() => setGuideOpen(false)}
+            quotas={snapshot.config && snapshot.config.helpQuotas}
+            allowLateJoin={!snapshot.config || snapshot.config.allowLateJoin !== false}
+          />
+        )}
       </div>
     );
   }

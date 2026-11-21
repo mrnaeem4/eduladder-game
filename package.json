@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
-    "test": "node --test test/engine.test.js test/helps.test.js test/persistence.test.js test/client-load.test.js test/room-finish.test.js test/room-question.test.js test/characters.test.js test/answers.test.js test/config.test.js test/countdown.test.js test/disconnect.test.js test/late-join.test.js test/weapon-fx.test.js test/text-format.test.js test/admin-editor.test.js",
+    "test": "node --test test/engine.test.js test/helps.test.js test/persistence.test.js test/client-load.test.js test/room-finish.test.js test/room-question.test.js test/characters.test.js test/answers.test.js test/config.test.js test/countdown.test.js test/disconnect.test.js test/late-join.test.js test/weapon-fx.test.js test/text-format.test.js test/admin-editor.test.js test/guide.test.js",
     "simulate": "node server/scripts/simulate.js"
   },
   "engines": {

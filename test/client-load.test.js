@@ -49,6 +49,7 @@ const SCRIPTS = [
   'client/audio.js',
   'client/dialog.js',
   'client/components.jsx',
+  'client/guide.jsx',
   'client/bootstrap.jsx',
   'client/screens.jsx',
   'client/admin.jsx',
@@ -87,7 +88,7 @@ test('global lintas berkas tersedia setelah semua skrip dimuat', () => {
   ['UI', 'Screens', 'AdminDashboard', 'LobbyScreen', 'GameScreen', 'Net', 'AudioKit', 'Board3D', 'Podium3D'].forEach((key) => {
     assert.ok(context[key], `window.${key} harus terdefinisi`);
   });
-  ['Modal', 'Toasts', 'MainQuestionOverlay', 'BonusOverlay', 'downloadTemplate', 'useCountdown', 'ActionPanel', 'PodiumStage', 'OverlayAnswerGrid'].forEach((key) => {
+  ['Modal', 'Toasts', 'MainQuestionOverlay', 'BonusOverlay', 'downloadTemplate', 'useCountdown', 'ActionPanel', 'PodiumStage', 'OverlayAnswerGrid', 'GuideModal', 'guideSections'].forEach((key) => {
     assert.ok(context.UI[key], `window.UI.${key} harus terdefinisi`);
   });
 });
@@ -96,7 +97,7 @@ test('tidak ada binding top-level yang bocor ke window', () => {
   const context = makeBrowserContext();
   SCRIPTS.forEach((name) => evalScript(context, name));
   /* Net & AudioKit memang global publik dari client/net.js & audio.js. */
-  ['useState', 'useRef', 'GE', 'HELP_TABS', 'SCRIPTS', 'PODIUM_HEIGHTS', 'MODEL_BUILDERS', 'REACTIONS', 'ActionPanel', 'PodiumStage'].forEach((key) => {
+  ['useState', 'useRef', 'GE', 'HELP_TABS', 'SCRIPTS', 'PODIUM_HEIGHTS', 'MODEL_BUILDERS', 'REACTIONS', 'ActionPanel', 'PodiumStage', 'buildGuideSections', 'GuideModal', 'GUIDE_SECTIONS', 'HELP_TONES', 'SECTION_TONES'].forEach((key) => {
     assert.strictEqual(context[key], undefined, `${key} tidak boleh menjadi global`);
   });
 });
